@@ -14,7 +14,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 import os
+import sqlite3
 
+# Test simple
+try:
+    with open("/tmp/test.txt", "w") as f:
+        f.write("test")
+    print("DEBUG: L'écriture dans /tmp fonctionne.")
+except Exception as e:
+    print(f"DEBUG: ERREUR d'écriture dans /tmp : {e}")
 db = Database("/tmp/bot.db")
 session_mgr = SessionManager(db)
 reporter = Reporter(db)
