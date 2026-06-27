@@ -16,16 +16,11 @@ logger = logging.getLogger(__name__)
 import os
 import sqlite3
 
-# Test simple
-try:
-    with open("/tmp/test.txt", "w") as f:
-        f.write("test")
-    print("DEBUG: L'écriture dans /tmp fonctionne.")
-except Exception as e:
-    print(f"DEBUG: ERREUR d'écriture dans /tmp : {e}")
-# Au lieu de : db = Database("/tmp/bot.db")
-# Utilisez :
-db = Database(":memory:")
+logging.basicConfig(level=logging.INFO)
+
+# --- CONFIGURATION DE LA BASE DE DONNÉES ---
+# On utilise /tmp/ pour être sûr que Railway nous laisse écrire
+DB_PATH = "/tmp/bot.db"
 session_mgr = SessionManager(db)
 reporter = Reporter(db)
 proxy_scraper = ProxyScraper(db)
