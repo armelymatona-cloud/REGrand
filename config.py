@@ -1,6 +1,10 @@
 import os
-BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Lecture de la variable, on sépare les IDs par une virgule dans Railway
+# On récupère les valeurs depuis l'environnement Railway
+TOKEN = os.getenv("TOKEN")
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+
+# Pour la liste des utilisateurs autorisés
 auth_users_str = os.getenv("AUTHORIZED_USERS", "")
-AUTHORIZED_USERS = [int(user_id.strip()) for user_id in auth_users_str.split(",") if user_id.strip()]
+AUTHORIZED_USERS = [int(u.strip()) for u in auth_users_str.split(",") if u.strip()]
