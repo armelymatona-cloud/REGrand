@@ -9,15 +9,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from telethon import TelegramClient
 from telethon.errors import *
 from telethon.sessions import StringSession
-from config import BOT_TOKEN, AUTHORIZED_USERS, DEFAULT_API_ID, DEFAULT_API_HASH
+from config import BOT_TOKEN, AUTHORIZED_USERS, SESSION_STRING
 from database import Database
 from session_mgr import SessionManager
 from reporter import Reporter
 from proxy_scraper import ProxyScraper
-
-# Chargement de la session depuis Railway
-session_str = os.getenv("SESSION_STRING")
-client = TelegramClient(StringSession(session_str), DEFAULT_API_ID, DEFAULT_API_HASD)
 
 # LOGS DÉTAILLÉS
 logging.basicConfig(
