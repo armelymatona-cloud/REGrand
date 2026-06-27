@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from config import BOT_TOKEN, AUTHORIZED_USERS
 from database import Database
 from session_mgr import SessionManager
-from reporter import Reporter
+from report import Reporter
 from proxy_scraper import ProxyScraper
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
