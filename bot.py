@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 import os
 
 # Remplacez vos anciennes lignes par celles-ci
-API_ID = os.getenv("DEFAULT_API_ID")
-API_HASH = os.getenv("DEFAULT_API_HASHH")
+DEFAULT_API_ID = os.getenv("DEFAULT_API_ID")
+DEFAULT_API_HASH = os.getenv("DEFAULT_API_HASHH")
 
 db = Database("bot.db")
 session_mgr = SessionManager(db)
