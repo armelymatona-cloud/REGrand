@@ -23,7 +23,9 @@ try:
     print("DEBUG: L'écriture dans /tmp fonctionne.")
 except Exception as e:
     print(f"DEBUG: ERREUR d'écriture dans /tmp : {e}")
-db = Database("/tmp/bot.db")
+# Au lieu de : db = Database("/tmp/bot.db")
+# Utilisez :
+db = Database(":memory:")
 session_mgr = SessionManager(db)
 reporter = Reporter(db)
 proxy_scraper = ProxyScraper(db)
