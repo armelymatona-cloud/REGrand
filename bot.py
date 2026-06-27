@@ -15,6 +15,10 @@ from session_mgr import SessionManager
 from reporter import Reporter
 from proxy_scraper import ProxyScraper
 
+# Chargement de la session depuis Railway
+session_str = os.getenv("SESSION_STRING")
+client = TelegramClient(StringSession(session_str), api_id, api_hash)
+
 # LOGS DÉTAILLÉS
 logging.basicConfig(
     level=logging.DEBUG,
