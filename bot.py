@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from telethon import TelegramClient
 from telethon.errors import *
 from telethon.sessions import StringSession
-from config import BOT_TOKEN, AUTHORIZED_USERS, DEFAULT_API_ID, DEFAULT_API_HASD
+from config import BOT_TOKEN, AUTHORIZED_USERS, DEFAULT_API_ID, DEFAULT_API_HASH
 from database import Database
 from session_mgr import SessionManager
 from reporter import Reporter
