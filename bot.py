@@ -218,7 +218,8 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info(f"✅ Code envoyé avec succès à {phone}")
         
-    except PhoneNumber
+    except PhoneNumber:
+    print("Numéro invalide")
     
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
