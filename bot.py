@@ -138,29 +138,168 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 @auth_required
-async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Ajoute un compte via Telethon avec empreinte réaliste
-    """
-    if not context.args:
-        await update.message.reply_text("Usage: `/add +22501234567`", parse_mode='Markdown')
-        return
+python
+
+import asyncio
+import logging
+import os
+import sys
+import random
+from datetime import datetime
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+from telethon import TelegramClient
+from telethon.errors import *
+from telethon.sessions import StringSession
+from config import BOT_TOKEN, AUTHORIZED_USERS, DEFAULT_API_ID, DEFAULT_API_HASH, SESSION_STRING
+from database import Database
+from session_mgr import SessionManager
+from reporter import Reporter
+from proxy_scraper import ProxyScraper
+
+# Remplacez l'ancienne logique par celle-ci :
+try:
+    with open(".session", "r") as f:
+        session_str = f.read().strip()
     
+    # Création du client avec le contenu du fichier
+    client = TelegramClient(StringSession(session_str), DEFAULT_API_ID, DEFAULT_API_HASH)
+except FileNotFoundError:
+    print("❌ ERREUR : Le fichier .session est introuvable !")
+    
+# LOGS DÉTAILLÉS
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('bot_debug.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+db = Database()
+session_mgr = SessionManager(db)
+reporter = Reporter(db)
+proxy_scraper = ProxyScraper(db)
+
+authorized_users = set(AUTHORIZED_USERS)
+_pending = {}
+
+# Device models réalistes pour éviter le flag Telegram
+REAL_DEVICES = [
+    "Samsung SM-S928B",
+    "iPhone16,2",
+    "Xiaomi 23127PN0CG",
+    "Pixel 9 Pro",
+    "OnePlus CPH2581",
+    "Samsung SM-A556B",
+    "iPhone15,3",
+    "Xiaomi 2211133C",
+    "OPPO CPH2499",
+    "Vivo V2324A",
+]
+
+# Langues réalistes
+REAL_LANG_CODES = ["fr", "en", "fr-FR", "en-US"]
+REAL_SYSTEM_VERSIONS = [
+    "Android 14",
+    "Android 13",
+    "iOS 18.0",
+    "iOS 17.5",
+    "Android 12",
+]
+REAL_APP_VERSIONS = [
+    "10.14.5",
+    "10.14.4",
+    "10.13.3",
+    "10.12.8",
+    "11.0.0",
+]
+
+def auth_required(func):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        if update.effective_user.id not in authorized_users:
+            logger.warning(f"Utilisateur non authorisé: {update.effective_user.id}")
+            await update.message.reply_text("⛔ Non authorisé")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
+def generate_random_fingerprint():
+    """Génère une empreinte aléatoire réaliste pour chaque connexion"""
+    return {
+        "device_model": random.choice(REAL_DEVICES),
+        "system_version": random.choice(REAL_SYSTEM_VERSIONS),
+        "app_version": random.choice(REAL_APP_VERSIONS),
+        "lang_code": random.choice(REAL_LANG_CODES),
+        "system_lang_code": "fr" if random.random() > 0.5 else "en",
+    }
+
+def create_telegram_client(session_string=None):
+    """Crée un client Telethon avec empreinte réaliste"""
+    fp = generate_random_fingerprint()
+    
+    if session_string:
+        session = StringSession(session_string)
+    else:
+        session = StringSession()
+    
+    client = TelegramClient(
+        session,
+        DEFAULT_API_ID,
+        DEFAULT_API_HASH,
+        device_model=fp["device_model"],
+        system_version=fp["system_version"],
+        app_version=fp["app_version"],
+        lang_code=fp["lang_code"],
+        system_lang_code=fp["system_lang_code"],
+        connection_retries=5,
+        timeout=30,
+    )
+    return client
+
+@auth_required
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    accounts = db.get_active_accounts()
+    proxies = db.get_proxy_count()
+    msg = (
+        f"🤖 **TELEGRAM PURGE BOT**\n\n"
+        f"📱 Comptes: {len(session_mgr.clients)}/{len(accounts)} actifs\n"
+        f"🔌 Proxies: {proxies} en base\n\n"
+        f"**Commandes:**\n"
+        f"`/add +XX123456789` - Ajouter un compte (remplacez XX par l'indicatif du pays)\n"
+        f"`/co 12345` - Code de vérification\n"
+        f"`/cod2 mdp` - Code 2FA\n"
+        f"`/status` - Statut\n"
+        f"`/702 @user` - Signaler\n"
+        f"`/scrape` - Scraper proxies\n"
+        f"`/del +XX123456789` - Supprimer\n"
+        f"`/reconnect` - Reconnecter"
+    )
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+@auth_required
+async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: `/add +XX123456789` (remplacez XX par l'indicatif du pays)", parse_mode='Markdown')
+        return
+
     phone = context.args[0]
     logger.info(f"📱 Tentative d'ajout: {phone}")
-    
+
     # Nettoyage automatique du numéro
     phone = phone.strip()
     if not phone.startswith('+'):
         phone = '+' + phone
-    
+
     # Vérifier format
     if len(phone) < 10:
-        await update.message.reply_text(f"❌ Numéro trop court: `{phone}`\nFormat: `+22501234567`", parse_mode='Markdown')
+        await update.message.reply_text(f"❌ Numéro trop court: `{phone}`\nFormat: `+XX123456789` (remplacez XX par l'indicatif du pays)", parse_mode='Markdown')
         return
-    
+
     msg = await update.message.reply_text(f"📱 Connexion de `{phone}`...\nPatientez...", parse_mode='Markdown')
-    
+
     try:
         logger.debug(f"Création du client Telethon pour {phone}")
         
@@ -221,32 +360,8 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info(f"✅ Code envoyé avec succès à {phone}")
         
-    except PhoneNumberInvalidError:
-        logger.error(f"Numéro invalide: {phone}")
-        await msg.edit_text(
-            f"❌ **Numéro invalide**: `{phone}`\n\n"
-            f"Format correct pour la Côte d'Ivoire:\n"
-            f"`+22501234567` ou `+22505234567`\n\n"
-            f"L'indicatif est `+225` suivi de 8 chiffres (sans le 0 après le 225)",
-            parse_mode='Markdown'
-        )
-    except PhoneNumberBannedError:
-        await msg.edit_text(f"❌ `{phone}` est banni de Telegram", parse_mode='Markdown')
-    except PhoneNumberFloodError:
-        await msg.edit_text(f"❌ Trop de tentatives pour `{phone}`. Attends 1 heure.", parse_mode='Markdown')
-    except FloodWaitError as e:
-        await msg.edit_text(f"❌ Flood attend: {e.seconds} secondes", parse_mode='Markdown')
-    except Exception as e:
-        logger.error(f"❌ Erreur add_account pour {phone}: {e}", exc_info=True)
-        await msg.edit_text(
-            f"❌ **Erreur**: `{str(e)[:300]}`\n\n"
-            f"Vérifie que:\n"
-            f"1. Le numéro est correct (+225...)\n"
-            f"2. Tu as bien un compte Telegram sur ce numéro\n"
-            f"3. Les API_ID et API_HASH dans config.py sont bons",
-            parse_mode='Markdown'
-        )
-
+    except PhoneNumber
+    
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/co 12345"""
