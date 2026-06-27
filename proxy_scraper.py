@@ -336,7 +336,7 @@ class ProxyScraper:
         ]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+        await asyncio.sleep(5) 
         # Fusionner tous les proxies
         all_proxies = []
         for result in results:
