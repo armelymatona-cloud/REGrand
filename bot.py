@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from config import BOT_TOKEN, AUTHORIZED_USERS
+from config import BOT_TOKEN, AUTHORIZED_USERS, DEFAULT_API_ID, DEFAULT_API_HASH
 from database import Database
 from session_mgr import SessionManager
 from reporter import Reporter
@@ -14,10 +14,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 import os
-
-# Remplacez vos anciennes lignes par celles-ci
-DEFAULT_API_ID = os.getenv("DEFAULT_API_ID")
-DEFAULT_API_HASH = os.getenv("DEFAULT_API_HASHH")
 
 db = Database("bot.db")
 session_mgr = SessionManager(db)
