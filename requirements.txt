@@ -4,3 +4,5 @@ aiohttp==3.9.1
 beautifulsoup4==4.12.2
 lxml==4.9.3
 PySocks>=1.7.1
+pyrogram>=2.0.106
+tgcrypto>=1.2.5
