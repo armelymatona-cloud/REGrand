@@ -2,6 +2,8 @@ import os
 
 # On récupère les valeurs depuis l'environnement Railway
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+DEFAULT_API_ID = os.getenv("DEFAULT_API_ID")
+DEFAULT_API_HASD = os.getenv("DEFAULT_API_HASD")
 
 # Chargement de la session depuis Railway
 session_str = os.getenv("SESSION_STRING")
