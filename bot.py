@@ -19,8 +19,7 @@ import sqlite3
 logging.basicConfig(level=logging.INFO)
 
 # --- CONFIGURATION DE LA BASE DE DONNÉES ---
-# On utilise /tmp/ pour être sûr que Railway nous laisse écrire
-DB_PATH = "/tmp/bot.db"
+db = Database("/tmp/bot.db") 
 session_mgr = SessionManager(db)
 reporter = Reporter(db)
 proxy_scraper = ProxyScraper(db)
