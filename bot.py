@@ -117,6 +117,16 @@ def create_telegram_client(session_string=None):
     )
     return client
 
+logging.basicConfig(level=logging.DEBUG) # Force l'affichage de tout ce que fait le bot
+
+print("--- Tentative de connexion au serveur Telegram ---")
+try:
+    await client.start()
+    print("--- Connexion réussie ! ---")
+except Exception as e:
+    print(f"--- ERREUR CRITIQUE AU LANCEMENT : {e} ---")
+    raise e # Relance l'erreur pour voir le détail complet
+    
 @auth_required
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     accounts = db.get_active_accounts()
