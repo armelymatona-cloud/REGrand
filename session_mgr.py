@@ -6,7 +6,7 @@ from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
 from typing import Optional, Tuple
 from database import Database
-from models import Account
+from model import Account
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
