@@ -665,4 +665,6 @@ def main():
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
+    with client:
+    client.loop.run_forever()
     main()
