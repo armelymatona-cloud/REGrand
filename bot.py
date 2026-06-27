@@ -13,9 +13,11 @@ from proxy_scraper import ProxyScraper
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# API Telegram publics officiels - pas besoin de my.telegram.org
-DEFAULT_API_ID = 6
-DEFAULT_API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
+import os
+
+# Remplacez vos anciennes lignes par celles-ci
+API_ID = os.getenv("DEFAULT_API_ID")
+API_HASH = os.getenv("DEFAULT_API_HASHH")
 
 db = Database("bot.db")
 session_mgr = SessionManager(db)
