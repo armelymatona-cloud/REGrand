@@ -2,7 +2,7 @@
 import sqlite3
 import json
 from typing import List, Optional
-from models import Account, Proxy, Target
+from model import Account, Proxy, Target
 from datetime import datetime
 
 class Database:
