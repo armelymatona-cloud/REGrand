@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 import os
 
-db = Database("bot.db")
+db = Database("/tmp/bot.db")
 session_mgr = SessionManager(db)
 reporter = Reporter(db)
 proxy_scraper = ProxyScraper(db)
