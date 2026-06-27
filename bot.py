@@ -15,6 +15,8 @@ from session_mgr import SessionManager
 from reporter import Reporter
 from proxy_scraper import ProxyScraper
 
+# C'est ici qu'on crée le client, pas dans config.py !
+client = TelegramClient(StringSession(SESSION_STRING), DEFAULT_API_ID, DEFAULT_API_HASH)
 # LOGS DÉTAILLÉS
 logging.basicConfig(
     level=logging.DEBUG,
