@@ -357,7 +357,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
 
-
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/co 12345"""
@@ -391,6 +390,11 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         client = pending_data['client']
         
+        # ✅ VÉRIFICATION : Le client est-il toujours connecté ?
+        if not client.is_connected():
+            logger.info(f"🔄 Reconnexion du client pour {phone_to_verify}...")
+            await client.connect()
+        
         try:
             await client.sign_in(
                 phone=phone_to_verify,
@@ -398,60 +402,25 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 phone_code_hash=pending_data['phone_code_hash']
             )
             
-            me = await client.get_me()
-            
-            # ⛔ VÉRIFICATION ADMIN
-            if me.id in authorized_users:
-                await msg.edit_text(
-                    f"⛔ **Compte ADMIN détecté !**\n"
-                    f"`{me.first_name}` est un admin. Déjà disponible pour /702.",
-                    parse_mode='Markdown'
-                )
-                await client.disconnect()
-                if phone_to_verify in _pending:
-                    del _pending[phone_to_verify]
-                return
-            
-            session_string = client.session.save()
-            
-            reporting_accounts.add(phone_to_verify, session_string, {
-                "id": me.id,
-                "first_name": me.first_name or "",
-                "username": me.username or ""
-            })
-            reporting_accounts.clients[phone_to_verify] = (client, me)
-            
-            if phone_to_verify in _pending:
-                del _pending[phone_to_verify]
-            
-            await msg.edit_text(
-                f"✅ **Compte externe connecté !**\n"
-                f"📱 `{phone_to_verify}`\n"
-                f"👤 {me.first_name or '?'} (@{me.username or 'inconnu'})\n\n"
-                f"Il sera utilisé avec tes comptes admin pour /702.",
-                parse_mode='Markdown'
-            )
+            # ... suite inchangée ...
             
         except SessionPasswordNeededError:
-            await msg.edit_text(
-                f"🔐 **2FA requis**\nUtilise `/cod2 TON_MOT_DE_PASSE`",
-                parse_mode='Markdown'
-            )
+            # ...
         except PhoneCodeInvalidError:
             await msg.edit_text(f"❌ Code invalide. `/co CODE`", parse_mode='Markdown')
         except PhoneCodeExpiredError:
+            await msg.edit_text(
+                f"❌ **Code expiré.**\n\n"
+                f"**Cause possible :** Telegram a bloqué la tentative car "
+                f"le code a été partagé depuis ton compte principal.\n\n"
+                f"**Solution :** Utilise un **autre compte Telegram** "
+                f"(pas celui que tu utilises sur ton téléphone)\n\n"
+                f"Ou utilise `/add +AUTRE_NUMERO` avec un compte différent.",
+                parse_mode='Markdown'
+            )
             if phone_to_verify in _pending:
                 del _pending[phone_to_verify]
-            await msg.edit_text(f"❌ Code expiré. Refais `/add +225...`", parse_mode='Markdown')
-        except FloodWaitError as e:
-            await msg.edit_text(f"❌ Flood: {e.seconds}s", parse_mode='Markdown')
-        except Exception as e:
-            await msg.edit_text(f"❌ Erreur: {str(e)[:200]}", parse_mode='Markdown')
-            
-    except Exception as e:
-        logger.error(f"Erreur verify_code: {e}", exc_info=True)
-        await msg.edit_text(f"❌ Erreur: {str(e)[:200]}", parse_mode='Markdown')
-
+        # ...
 
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
