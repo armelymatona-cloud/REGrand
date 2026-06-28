@@ -208,7 +208,6 @@ def auth_required(func):
 @auth_required
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Affiche le menu d'aide"""
-    # Compter tous les comptes disponibles pour le signalement
     admin_clients = await session_mgr.get_active_clients()
     reporting_clients = reporting_accounts.get_active_clients()
     total_reporting = len(admin_clients) + len(reporting_clients)
@@ -557,7 +556,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_clean = target_username.lstrip('@').lower()
     
     # ===== PROTECTION : Récupérer les infos des admins =====
-    admin_ids = authorized_users
+    admin_ids = set(authorized_users)
     admin_usernames = set()
     
     for admin_id in admin_ids:
@@ -565,11 +564,9 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat = await context.bot.get_chat(admin_id)
             if chat.username:
                 admin_usernames.add(chat.username.lower())
-            # Ajouter aussi le nom avec @
-            if chat.username:
                 admin_usernames.add(f"@{chat.username.lower()}")
-        except Exception as e:
-            logger.debug(f"Impossible de récupérer le chat pour {admin_id}: {e}")
+        except:
+            pass
     
     # Vérifier aussi via les comptes admin connectés
     admin_clients_check = await session_mgr.get_active_clients()
@@ -589,24 +586,20 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Essayer de résoudre l'ID de la cible pour vérifier aussi par ID
-    try:
-        admin_clients_check_2 = await session_mgr.get_active_clients()
-        for client, me in admin_clients_check_2:
-            try:
-                target_entity = await client.get_entity(target_username)
-                if hasattr(target_entity, 'id') and target_entity.id in admin_ids:
-                    await update.message.reply_text(
-                        f"❌ **Signalement BLOQUÉ !**\n"
-                        f"Cette cible (ID: {target_entity.id}) est un administrateur.",
-                        parse_mode='Markdown'
-                    )
-                    return
-            except:
-                pass
-            break  # Un seul essai suffit
-    except:
-        pass
+    # Vérification supplémentaire par ID via Telethon
+    if admin_clients_check:
+        try:
+            client, _ = admin_clients_check[0]
+            target_entity = await client.get_entity(target_username)
+            if hasattr(target_entity, 'id') and target_entity.id in admin_ids:
+                await update.message.reply_text(
+                    f"❌ **Signalement BLOQUÉ !**\n"
+                    f"Cette cible (ID: {target_entity.id}) est un administrateur.",
+                    parse_mode='Markdown'
+                )
+                return
+        except:
+            pass
     
     # ===== RÉCUPÉRER TOUS LES COMPTES DISPONIBLES =====
     all_clients = []
@@ -642,12 +635,14 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.add_target(target_username)
         db.increment_target_reports(target_username)
         
+        admin_count = len(admin_clients)
+        
         await msg.edit_text(
             f"✅ **Signalement terminé**\n"
             f"🎯 `{target_username}`\n"
             f"📊 {success}/{len(all_clients)} ont signalé\n"
-            f"   • Admins: {min(success, len(admin_clients))}/{len(admin_clients)}\n"
-            f"   • Externes: {max(0, success - len(admin_clients))}/{len(reporting_clients)}",
+            f"   • Admins: {min(success, admin_count)}/{admin_count}\n"
+            f"   • Externes: {max(0, success - admin_count)}/{len(reporting_clients)}",
             parse_mode='Markdown'
         )
     except Exception as e:
@@ -702,6 +697,8 @@ async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Reconnecter les comptes admin
     await session_mgr.disconnect_all()
     admin_count = await session_mgr.load_all_active_accounts()
+    if admin_count is None:
+        admin_count = 0
     
     # Reconnecter les comptes externes
     for phone in list(reporting_accounts.clients.keys()):
@@ -712,6 +709,8 @@ async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     reporting_accounts.clients.clear()
     external_count = await reporting_accounts.connect_all()
+    if external_count is None:
+        external_count = 0
     
     total = admin_count + external_count
     
@@ -735,11 +734,23 @@ async def post_init(app: Application):
     # 1. Charger les comptes admin (via session_mgr)
     logger.info("👤 Chargement des comptes admin...")
     admin_count = await session_mgr.load_all_active_accounts()
+    
+    # ✅ SÉCURISÉ : Si None, on met 0
+    if admin_count is None:
+        admin_count = 0
+        logger.warning("⚠️ load_all_active_accounts a retourné None, forcé à 0")
+    
     logger.info(f"✅ {admin_count} comptes admin chargés")
     
     # 2. Charger les comptes externes (via reporting_accounts)
     logger.info("👤 Chargement des comptes externes...")
     external_count = await reporting_accounts.connect_all()
+    
+    # ✅ SÉCURISÉ : Si None, on met 0
+    if external_count is None:
+        external_count = 0
+        logger.warning("⚠️ connect_all a retourné None, forcé à 0")
+    
     logger.info(f"✅ {external_count} comptes externes chargés")
     
     # 3. Scraper les proxies si aucun en base
