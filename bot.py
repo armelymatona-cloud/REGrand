@@ -186,15 +186,13 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Commande /help"""
     await start(update, context)
 
-
 @auth_required
 async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/add +225XXXXXXXX"""
     if not context.args:
         await update.message.reply_text(
             "Usage : `/add +225XXXXXXXX`\n"
-            "Utilise tes API_ID et API_HASH par défaut.\n"
-            "Pour spécifier d'autres credentials : `/add +225XXXXXXXX API_ID API_HASH`",
+            "Pour spécifier credentials : `/add +225XXXXXXXX API_ID API_HASH`",
             parse_mode='Markdown'
         )
         return
@@ -217,7 +215,7 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ API_ID doit être un nombre.", parse_mode='Markdown')
             return
 
-    # Si le compte existe déjà avec une session valide, le reconnecter
+    # Vérifier si déjà connecté
     session_data = db.get_account_session(phone)
     if session_data:
         try:
@@ -226,21 +224,19 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if await client.is_user_authorized():
                 me = await client.get_me()
                 reporting_accounts.clients[phone] = (client, me)
+                uname = me.username or "pas d'username"
                 await update.message.reply_text(
                     f"✅ Compte `{phone}` déjà enregistré et reconnecté !\n"
-                    f"👤 {me.first_name} (@{me.username or 'pas d'username'})",
+                    f"👤 {me.first_name} (@{uname})",
                     parse_mode='Markdown'
                 )
                 return
         except:
             pass
 
-    # Enregistrer le compte dans le fichier
     reporting_accounts.add(phone, api_id, api_hash)
 
-    # Envoyer le code
     try:
-        # Créer un NOUVEAU client à chaque fois (StringSession vide = nouvelle session)
         client = TelegramClient(StringSession(), api_id, api_hash,
                                 device_model=random.choice(REAL_DEVICES),
                                 system_version=random.choice(REAL_SYSTEM_VERSIONS),
@@ -248,7 +244,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 lang_code=random.choice(REAL_LANG_CODES))
         await client.connect()
 
-        # Vérifier si déjà autorisé (étrange mais possible)
         if await client.is_user_authorized():
             me = await client.get_me()
             session_string = client.session.save()
@@ -260,11 +255,9 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Envoyer le code de vérification
         sent = await client.send_code_request(phone)
         phone_code_hash = sent.phone_code_hash
 
-        # Stocker la demande avec le HASH pour la vérification
         reporting_accounts._code_requests[phone] = {
             "client": client,
             "phone_code_hash": phone_code_hash,
@@ -277,7 +270,7 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"📱 Code envoyé à `{phone}`\n"
             f"⏳ Valable 5 minutes. Utilise `/co CODE` pour valider.\n"
-            f"Si le code expire, refais `/add {phone}` pour en recevoir un nouveau.",
+            f"Si le code expire, refais `/add {phone}`.",
             parse_mode='Markdown'
         )
         logger.info(f"📱 Code envoyé à {phone}")
@@ -286,16 +279,8 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Numéro invalide. Vérifie le format (+225XXXXXXXX).", parse_mode='Markdown')
     except PhoneNumberFloodError:
         await update.message.reply_text("❌ Trop de tentatives. Attends quelques minutes.", parse_mode='Markdown')
-    except Exception as e:
-        logger.error(f"❌ Erreur envoi code à {phone}: {e}", exc_info=True)
-        reporting_accounts.remove(phone)
-        await update.message.reply_text(
-            f"❌ Erreur envoi : `{str(e)[:200]}`\n"
-            f"Vérifie que le numéro est correct et réessaie.",
-            parse_mode='Markdown'
-        )
-
-
+    except Exception as
+    
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/co CODE"""
@@ -313,11 +298,9 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Prendre la demande la plus récente
     phone = list(reporting_accounts._code_requests.keys())[-1]
     req = reporting_accounts._code_requests[phone]
 
-    # Vérifier si le code n'a pas trop vieilli (5 min max)
     sent_at = req.get("sent_at")
     if sent_at and (datetime.now() - sent_at).total_seconds() > 300:
         await update.message.reply_text(
@@ -338,20 +321,19 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone_code_hash=phone_code_hash
         )
 
-        # Succès
         session_string = client.session.save()
         db.update_account_session(phone, session_string)
 
         me = await client.get_me()
         reporting_accounts.clients[phone] = (client, me)
 
-        # Nettoyer
         del reporting_accounts._code_requests[phone]
 
+        uname = me.username or "pas d'username"
         await update.message.reply_text(
             f"✅ **Compte connecté avec succès !**\n"
             f"📱 `{phone}`\n"
-            f"👤 {me.first_name} (@{me.username or 'pas d'username'})\n"
+            f"👤 {me.first_name} (@{uname})\n"
             f"🆔 ID: `{me.id}`\n\n"
             f"Le compte est prêt pour le signalement.",
             parse_mode='Markdown'
