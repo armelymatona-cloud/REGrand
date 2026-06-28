@@ -66,13 +66,14 @@ class ProxyScraper:
                 all_proxies.extend(result)
         
         all_proxies = list(set(all_proxies))
+        logger.info(f"📊 Total proxies scrapés (brut): {len(all_proxies)}")
         
         if self.session and not self.session.closed:
             await self.session.close()
         
         if all_proxies:
             new_count = self.db.add_proxies(all_proxies)
-            logger.info(f"🎉 Scraping terminé : {new_count} nouveaux proxies stockés (total: {self.db.get_proxy_count()})")
+            logger.info(f"🎉 Scraping terminé : {new_count} nouveaux proxies (total: {self.db.get_proxy_count()})")
             return new_count
         
         return 0
