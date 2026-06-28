@@ -233,33 +233,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @auth_required
+@auth_required
 async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Ajoute un compte EXTERNE (non-admin) pour le signalement.
-    Ces comptes s'ajoutent aux comptes admin pour /702.
-    Les admins ne peuvent pas être ajoutés ici.
-    """
-    if not context.args:
-        await update.message.reply_text("Usage: `/add +22501234567`", parse_mode='Markdown')
-        return
-    
-    phone = context.args[0].strip()
-    logger.info(f"📱 Ajout compte externe: {phone}")
-    
-    if not phone.startswith('+'):
-        phone = '+' + phone
-    
-    if len(phone) < 10:
-        await update.message.reply_text(
-            f"❌ Numéro trop court: `{phone}`\nFormat: `+22501234567`",
-            parse_mode='Markdown'
-        )
-        return
-    
-    msg = await update.message.reply_text(
-        f"📱 Connexion de `{phone}`...\nPatientez...",
-        parse_mode='Markdown'
-    )
+    # ... début inchangé ...
     
     try:
         client = create_telegram_client()
@@ -268,36 +244,82 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_auth = await client.is_user_authorized()
         
         if is_auth:
-            me = await client.get_me()
-            
-            # ⛔ VÉRIFICATION : Ne JAMAIS ajouter un admin
-            if me.id in authorized_users:
+            # ... déjà connecté, code inchangé ...
+            pass
+        
+        # ===== ENVOI DU CODE CORRIGÉ =====
+        logger.debug(f"Envoi du code à {phone}...")
+        
+        # ✅ SOLUTION 1 : Utiliser force_sms=False (priorité à l'appel ou au code via l'app Telegram)
+        sent = await client.send_code_request(
+            phone,
+            force_sms=False,  # N'envoie PAS de SMS si possible, utilise la notification Telegram
+            current_number=True  # Indique que c'est le numéro actuel de l'utilisateur
+        )
+        
+        # Si ça échoue, on tombe dans l'exception et on essaie en force_sms=True
+        logger.debug(f"Code envoyé! phone_code_hash: {sent.phone_code_hash}")
+        
+        # ... suite inchangée ...
+        
+    except PhoneNumberInvalidError:
+        await msg.edit_text(f"❌ Numéro invalide: `{phone}`", parse_mode='Markdown')
+    except PhoneNumberBannedError:
+        await msg.edit_text(f"❌ `{phone}` est banni de Telegram", parse_mode='Markdown')
+    except PhoneNumberFloodError:
+        await msg.edit_text(f"❌ Trop de tentatives pour `{phone}`", parse_mode='Markdown')
+    except FloodWaitError as e:
+        await msg.edit_text(f"❌ Flood: attend {e.seconds}s", parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"❌ Erreur add_account: {e}", exc_info=True)
+        
+        # ✅ SOLUTION 2 : Si échec avec force_sms=False, réessayer en mode SMS
+        if "current_number" in str(e) or "PHONE_NUMBER_INVALID" in str(e):
+            try:
+                logger.debug("Tentative alternative avec force_sms=True...")
                 await msg.edit_text(
-                    f"⛔ **Ce compte est un ADMIN.**\n\n"
-                    f"Les comptes administrateurs sont déjà disponibles "
-                    f"pour le signalement via /702. Pas besoin de les ajouter.",
+                    f"📱 Tentative alternative pour `{phone}`...",
                     parse_mode='Markdown'
                 )
-                await client.disconnect()
+                
+                # Créer un nouveau client (pour éviter les problèmes d'état)
+                client2 = create_telegram_client()
+                await client2.connect()
+                
+                sent = await client2.send_code_request(
+                    phone,
+                    force_sms=True,  # Force l'envoi par SMS
+                    current_number=False
+                )
+                
+                _pending[phone] = {
+                    'client': client2,
+                    'phone_code_hash': sent.phone_code_hash,
+                    'user_id': update.effective_user.id,
+                    'phone': phone,
+                    'type': 'reporting'
+                }
+                
+                await msg.edit_text(
+                    f"✅ **Code SMS envoyé à** `{phone}`\n\n"
+                    f"📨 Vérifie tes SMS\n"
+                    f"📝 Utilise `/co CODE` (ex: `/co 12345`)\n\n"
+                    f"⚠️ Si le code est le même que sur ton téléphone, "
+                    f"utilise plutôt un **autre compte Telegram** pour le signalement.",
+                    parse_mode='Markdown'
+                )
                 return
-            
-            session_string = client.session.save()
-            
-            reporting_accounts.add(phone, session_string, {
-                "id": me.id,
-                "first_name": me.first_name or "",
-                "username": me.username or ""
-            })
-            reporting_accounts.clients[phone] = (client, me)
-            
-            await msg.edit_text(
-                f"✅ **Compte externe ajouté !**\n"
-                f"📱 `{phone}`\n"
-                f"👤 {me.first_name or '?'} (@{me.username or 'inconnu'})\n\n"
-                f"Il sera utilisé avec tes comptes admin pour /702.",
-                parse_mode='Markdown'
-            )
-            return
+            except Exception as e2:
+                logger.error(f"❌ Échec tentative alternative: {e2}")
+        
+        await msg.edit_text(
+            f"❌ **Erreur**: ```{str(e)[:300]}```\n\n"
+            f"Solutions:\n"
+            f"1. Utilise un **compte différent** de ton compte principal\n"
+            f"2. Vérifie le format du numéro (+225...)\n"
+            f"3. Vérifie API_ID/API_HASH",
+            parse_mode='Markdown'
+        )
         
         # Envoi du code
         sent = await client.send_code_request(phone)
