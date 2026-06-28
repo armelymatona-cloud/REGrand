@@ -279,7 +279,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
 
-
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/co CODE"""
@@ -299,17 +298,50 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = list(reporting_accounts._code_requests.keys())[-1]
     req = reporting_accounts._code_requests[phone]
 
-    sent_at = req.get("sent_at")
-    if sent_at and (datetime.now() - sent_at).total_seconds() > 300:
-        await update.message.reply_text(
-            f"❌ Code expiré. Refais `/add {phone}`.",
-            parse_mode='Markdown'
-        )
-        del reporting_accounts._code_requests[phone]
-        return
-
     client = req["client"]
-    phone_code_hash = req["phone_code_hash"]
+    phone_code_hash = req.get("phone_code_hash")
+
+    # Vérifier si le client est toujours connecté
+    try:
+        if not client.is_connected():
+            logger.warning(f"⚠️ Client déconnecté pour {phone}, reconnexion...")
+            await client.connect()
+    except:
+        pass
+
+    # Si le code a expiré, tenter d'en renvoyer un NOUVEAU automatiquement
+    sent_at = req.get("sent_at")
+    if sent_at and (datetime.now() - sent_at).total_seconds() > 240:
+        try:
+            await update.message.reply_text(
+                f"🔄 Code précédent expiré, envoi d'un nouveau code à `{phone}`...",
+                parse_mode='Markdown'
+            )
+            # Renvoyer un code frais
+            sent = await client.send_code_request(phone)
+            new_hash = sent.phone_code_hash
+            reporting_accounts._code_requests[phone] = {
+                "client": client,
+                "phone_code_hash": new_hash,
+                "phone": phone,
+                "api_id": req["api_id"],
+                "api_hash": req["api_hash"],
+                "sent_at": datetime.now()
+            }
+            await update.message.reply_text(
+                f"📱 Nouveau code envoyé à `{phone}`\n"
+                f"⏳ Utilise `/co CODE` maintenant, il est frais !",
+                parse_mode='Markdown'
+            )
+            return
+        except Exception as e:
+            logger.error(f"❌ Erreur renvoi code: {e}")
+            await update.message.reply_text(
+                f"❌ Impossible de renvoyer le code. Refais `/add {phone}`.",
+                parse_mode='Markdown'
+            )
+            del reporting_accounts._code_requests[phone]
+            return
 
     try:
         await client.sign_in(
@@ -337,10 +369,14 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"✅ Compte {phone} connecté")
 
     except PhoneCodeInvalidError:
-        await update.message.reply_text("❌ Code invalide.", parse_mode='Markdown')
+        await update.message.reply_text("❌ Code invalide. Réessaie avec `/co CODE`", parse_mode='Markdown')
     except PhoneCodeExpiredError:
-        await update.message.reply_text(f"❌ Code expiré. Refais `/add {phone}`.", parse_mode='Markdown')
-        del reporting_accounts._code_requests[phone]
+        await update.message.reply_text(
+            f"❌ Code expiré. Le bot va tenter d'en renvoyer un...\n"
+            f"Refais `/add {phone}` pour recevoir un nouveau code.",
+            parse_mode='Markdown'
+        )
+        # On ne supprime pas la requête pour permettre le renvoi automatique
     except SessionPasswordNeededError:
         reporting_accounts._2fa_requests[phone] = {"client": client}
         await update.message.reply_text(
@@ -350,7 +386,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Erreur vérification: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Erreur : `{str(e)[:200]}`", parse_mode='Markdown')
-
 
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
