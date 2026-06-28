@@ -10,7 +10,12 @@ class SessionManager:
     
     def __init__(self, db):
         self.db = db
-        self.clients = {}
+        self.clients = {}  # {phone: (client, me)}
+    
+    def add_client_sync(self, phone, client, me):
+        """Ajout synchrone (utilisé pour SESSION_STRING au démarrage)"""
+        self.clients[phone] = (client, me)
+        logger.info(f"✅ Compte admin ajouté: {phone} ({me.first_name})")
     
     async def add_client(self, phone, client, me=None):
         if me is None:
@@ -38,8 +43,8 @@ class SessionManager:
         accounts = self.db.get_active_accounts()
         loaded = 0
         for acc in accounts:
-            phone = acc["phone"]
-            session_str = acc.get("session_string", "")
+            phone = acc.phone
+            session_str = acc.session_string
             if not session_str:
                 continue
             try:
@@ -51,7 +56,7 @@ class SessionManager:
                     self.clients[phone] = (client, me)
                     loaded += 1
                 else:
-                    self.db.update_account_status(phone, "expired")
+                    self.db.update_account_status(phone, False)
             except Exception as e:
                 logger.error(f"❌ Erreur chargement {phone}: {e}")
         
@@ -61,8 +66,3 @@ class SessionManager:
     async def get_active_clients(self):
         """Retourne la liste des (client, me) actifs"""
         return [(c, m) for c, m in self.clients.values()]
-    
-    def add_client_sync(self, phone, client, me):
-        """Ajout synchrone pour le client avec SESSION_STRING"""
-        self.clients[phone] = (client, me)
-        logger.info(f"✅ Compte admin ajouté: {phone} ({me.first_name})")
