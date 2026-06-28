@@ -203,12 +203,8 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not phone.startswith('+'):
         phone = '+' + phone
 
-    # Vérifier le format du numéro
     if not phone[1:].isdigit() or len(phone) < 8:
-        await update.message.reply_text(
-            "❌ Format invalide. Utilise `/add +225XXXXXXXX`",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text("❌ Format invalide. Utilise `/add +225XXXXXXXX`", parse_mode='Markdown')
         return
 
     api_id = API_ID
@@ -218,43 +214,84 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             api_id = int(context.args[1])
             api_hash = context.args[2]
         except ValueError:
-            await update.message.reply_text(
-                "❌ API_ID doit être un nombre. Usage : `/add +225XXXXXXXX API_ID API_HASH`",
-                parse_mode='Markdown'
-            )
+            await update.message.reply_text("❌ API_ID doit être un nombre.", parse_mode='Markdown')
             return
 
-    # Enregistrer le compte
+    # Si le compte existe déjà avec une session valide, le reconnecter
+    session_data = db.get_account_session(phone)
+    if session_data:
+        try:
+            client = create_telegram_client(session_data)
+            await client.connect()
+            if await client.is_user_authorized():
+                me = await client.get_me()
+                reporting_accounts.clients[phone] = (client, me)
+                await update.message.reply_text(
+                    f"✅ Compte `{phone}` déjà enregistré et reconnecté !\n"
+                    f"👤 {me.first_name} (@{me.username or 'pas d'username'})",
+                    parse_mode='Markdown'
+                )
+                return
+        except:
+            pass
+
+    # Enregistrer le compte dans le fichier
     reporting_accounts.add(phone, api_id, api_hash)
 
     # Envoyer le code
     try:
-        client = TelegramClient(StringSession(), api_id, api_hash)
+        # Créer un NOUVEAU client à chaque fois (StringSession vide = nouvelle session)
+        client = TelegramClient(StringSession(), api_id, api_hash,
+                                device_model=random.choice(REAL_DEVICES),
+                                system_version=random.choice(REAL_SYSTEM_VERSIONS),
+                                app_version=random.choice(REAL_APP_VERSIONS),
+                                lang_code=random.choice(REAL_LANG_CODES))
         await client.connect()
 
+        # Vérifier si déjà autorisé (étrange mais possible)
+        if await client.is_user_authorized():
+            me = await client.get_me()
+            session_string = client.session.save()
+            db.update_account_session(phone, session_string)
+            reporting_accounts.clients[phone] = (client, me)
+            await update.message.reply_text(
+                f"✅ Compte `{phone}` déjà autorisé, session sauvegardée !",
+                parse_mode='Markdown'
+            )
+            return
+
+        # Envoyer le code de vérification
         sent = await client.send_code_request(phone)
         phone_code_hash = sent.phone_code_hash
 
-        # Stocker la demande
+        # Stocker la demande avec le HASH pour la vérification
         reporting_accounts._code_requests[phone] = {
             "client": client,
             "phone_code_hash": phone_code_hash,
             "phone": phone,
             "api_id": api_id,
-            "api_hash": api_hash
+            "api_hash": api_hash,
+            "sent_at": datetime.now()
         }
 
         await update.message.reply_text(
             f"📱 Code envoyé à `{phone}`\n"
-            f"Utilise `/co CODE` pour valider.",
+            f"⏳ Valable 5 minutes. Utilise `/co CODE` pour valider.\n"
+            f"Si le code expire, refais `/add {phone}` pour en recevoir un nouveau.",
             parse_mode='Markdown'
         )
         logger.info(f"📱 Code envoyé à {phone}")
+    except PhoneNumberInvalidError:
+        reporting_accounts.remove(phone)
+        await update.message.reply_text("❌ Numéro invalide. Vérifie le format (+225XXXXXXXX).", parse_mode='Markdown')
+    except PhoneNumberFloodError:
+        await update.message.reply_text("❌ Trop de tentatives. Attends quelques minutes.", parse_mode='Markdown')
     except Exception as e:
         logger.error(f"❌ Erreur envoi code à {phone}: {e}", exc_info=True)
         reporting_accounts.remove(phone)
         await update.message.reply_text(
-            f"❌ Impossible d'envoyer le code : `{str(e)[:200]}`",
+            f"❌ Erreur envoi : `{str(e)[:200]}`\n"
+            f"Vérifie que le numéro est correct et réessaie.",
             parse_mode='Markdown'
         )
 
@@ -268,28 +305,40 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     code = context.args[0].strip()
 
-    # Chercher la demande de code la plus récente
     if not reporting_accounts._code_requests:
         await update.message.reply_text(
-            "❌ Aucune demande de code en attente. Fais d'abord `/add +225XXXXXXXX`",
+            "❌ Aucune demande de code en attente.\n"
+            "Fais d'abord `/add +225XXXXXXXX` pour recevoir un code.",
             parse_mode='Markdown'
         )
         return
 
+    # Prendre la demande la plus récente
     phone = list(reporting_accounts._code_requests.keys())[-1]
     req = reporting_accounts._code_requests[phone]
 
-    try:
-        client = req["client"]
-        phone_code_hash = req["phone_code_hash"]
+    # Vérifier si le code n'a pas trop vieilli (5 min max)
+    sent_at = req.get("sent_at")
+    if sent_at and (datetime.now() - sent_at).total_seconds() > 300:
+        await update.message.reply_text(
+            f"❌ Le code a expiré (plus de 5 minutes).\n"
+            f"Refais `/add {phone}` pour recevoir un nouveau code.",
+            parse_mode='Markdown'
+        )
+        del reporting_accounts._code_requests[phone]
+        return
 
+    client = req["client"]
+    phone_code_hash = req["phone_code_hash"]
+
+    try:
         await client.sign_in(
             phone=phone,
             code=code,
             phone_code_hash=phone_code_hash
         )
 
-        # Succès : récupérer la session string
+        # Succès
         session_string = client.session.save()
         db.update_account_session(phone, session_string)
 
@@ -300,29 +349,41 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del reporting_accounts._code_requests[phone]
 
         await update.message.reply_text(
-            f"✅ Compte `{phone}` connecté !\n"
-            f"👤 {me.first_name} (@{me.username})",
+            f"✅ **Compte connecté avec succès !**\n"
+            f"📱 `{phone}`\n"
+            f"👤 {me.first_name} (@{me.username or 'pas d'username'})\n"
+            f"🆔 ID: `{me.id}`\n\n"
+            f"Le compte est prêt pour le signalement.",
             parse_mode='Markdown'
         )
         logger.info(f"✅ Compte {phone} connecté avec succès")
+
     except PhoneCodeInvalidError:
-        await update.message.reply_text("❌ Code invalide. Réessaie avec `/co CODE`", parse_mode='Markdown')
+        await update.message.reply_text(
+            "❌ Code invalide. Vérifie le code reçu et réessaie avec `/co CODE`",
+            parse_mode='Markdown'
+        )
+    except PhoneCodeExpiredError:
+        await update.message.reply_text(
+            f"❌ Code expiré. Refais `/add {phone}` pour recevoir un nouveau code.",
+            parse_mode='Markdown'
+        )
+        del reporting_accounts._code_requests[phone]
     except SessionPasswordNeededError:
-        # 2FA requis
         reporting_accounts._2fa_requests[phone] = {"client": client}
         await update.message.reply_text(
-            "🔐 Code valide ! Mais le compte a une double authentification.\n"
+            "🔐 Code valide ! Le compte a une double authentification.\n"
             "Utilise `/cod2 MOT_DE_PASSE`",
             parse_mode='Markdown'
         )
     except Exception as e:
         logger.error(f"❌ Erreur vérification code {phone}: {e}", exc_info=True)
         await update.message.reply_text(
-            f"❌ Erreur : `{str(e)[:200]}`",
+            f"❌ Erreur : `{str(e)[:200]}`\n"
+            f"Si le code a expiré, refais `/add {phone}`.",
             parse_mode='Markdown'
         )
-
-
+        
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/cod2 MOT_DE_PASSE"""
