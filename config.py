@@ -19,8 +19,8 @@ if API_ID == 0 or not API_HASH:
     print("⚠️  Ou édite directement ce fichier avec tes valeurs")
     
     # Valeurs de secours (à remplacer si tu ne passes pas par Railway)
-    API_ID = 1234567          # ← REMPLACE PAR TON API_ID
-    API_HASH = "ton_hash_ici" # ← REMPLACE PAR TON API_HASH
+    API_ID = 30062455          # ← REMPLACE PAR TON API_ID
+    API_HASH = "0745b6be4969fa770f3ca5493c8e797c" # ← REMPLACE PAR TON API_HASH
 
 DEFAULT_API_ID = API_ID
 DEFAULT_API_HASH = API_HASH
