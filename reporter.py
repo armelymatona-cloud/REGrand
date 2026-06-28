@@ -1,6 +1,8 @@
 import logging
 import asyncio
 import random
+from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
+from telethon.tl.functions.messages import CreateChat, DeleteChatUser
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ class Reporter:
         tasks = []
 
         for client, me in clients:
-            # Espacer les départs de 3 à 6 secondes pour éviter la détection
+            # Espacer les départs pour éviter la détection
             await asyncio.sleep(random.uniform(0.5, 1.5))
             tasks.append(self._report_single(client, me, target))
 
@@ -57,16 +59,14 @@ class Reporter:
 
             success_local = False
 
-            # ===== MÉTHODE 1: Block/Unblock =====
+            # ===== MÉTHODE 1: Block/Unblock via BlockRequest/UnblockRequest =====
             try:
-                from telethon.tl.functions.contacts import Block, Unblock
-                await client(Block(id=target_entity))
-                # Attendre entre les actions
+                await client(BlockRequest(id=target_entity))
+                logger.debug(f"✅ Block réussi via {me.first_name}")
                 await asyncio.sleep(random.uniform(5, 10))
-                await client(Unblock(id=target_entity))
-                logger.debug(f"✅ Block/Unblock réussi via {me.first_name}")
+                await client(UnblockRequest(id=target_entity))
+                logger.debug(f"✅ Unblock réussi via {me.first_name}")
                 success_local = True
-                # Pause avant la prochaine méthode
                 await asyncio.sleep(random.uniform(8, 15))
             except Exception as e:
                 logger.debug(f"⚠️ Block/Unblock échoué: {e}")
@@ -82,18 +82,14 @@ class Reporter:
             except Exception as e:
                 logger.debug(f"⚠️ Message vide échoué: {e}")
 
-            # ===== MÉTHODE 3: Créer un groupe et le signaler =====
+            # ===== MÉTHODE 3: Créer un groupe temporaire =====
             try:
-                from telethon.tl.functions.messages import CreateChat, DeleteChatUser
-
-                # Créer un groupe temporaire
                 chat = await client(CreateChat(
                     users=[target_entity],
                     title=f"tmp_{random.randint(10000, 99999)}"
                 ))
                 chat_id = chat.chats[0].id
 
-                # Quitter le groupe immédiatement
                 await asyncio.sleep(random.uniform(3, 6))
                 try:
                     await client(DeleteChatUser(chat_id=chat_id, user_id=target_entity))
