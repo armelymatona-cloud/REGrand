@@ -16,54 +16,34 @@ from session_mgr import SessionManager
 from reporter import Reporter
 from proxy_scraper import ProxyScraper
 
-# ========== LOGGING ==========
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('bot_debug.log')
-    ]
+    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler('bot_debug.log')]
 )
 logger = logging.getLogger(__name__)
 
-# ========== INITIALISATION ==========
 db = Database()
 session_mgr = SessionManager(db)
 reporter = Reporter(db)
 proxy_scraper = ProxyScraper(db)
 
 authorized_users = set(AUTHORIZED_USERS)
-_pending = {}
 
-# Device models réalistes
 REAL_DEVICES = [
-    "Samsung SM-S928B",
-    "iPhone16,2",
-    "Xiaomi 23127PN0CG",
-    "Pixel 9 Pro",
-    "OnePlus CPH2581",
-    "Samsung SM-A556B",
-    "iPhone15,3",
-    "Xiaomi 2211133C",
-    "OPPO CPH2499",
-    "Vivo V2324A",
+    "Samsung SM-S928B", "iPhone16,2", "Xiaomi 23127PN0CG", "Pixel 9 Pro",
+    "OnePlus CPH2581", "Samsung SM-A556B", "iPhone15,3", "Xiaomi 2211133C",
+    "OPPO CPH2499", "Vivo V2324A",
 ]
-
 REAL_LANG_CODES = ["fr", "en", "fr-FR", "en-US"]
 REAL_SYSTEM_VERSIONS = ["Android 14", "Android 13", "iOS 18.0", "iOS 17.5", "Android 12"]
 REAL_APP_VERSIONS = ["10.14.5", "10.14.4", "10.13.3", "10.12.8", "11.0.0"]
 
 
-# ========== FONCTIONS UTILITAIRES ==========
-
 def create_telegram_client(session_str, proxy=None):
-    """Crée un client Telethon avec des identifiants réalistes aléatoires"""
     client = TelegramClient(
-        StringSession(session_str),
-        API_ID,
-        API_HASH,
-        proxy=proxy if proxy else None,
+        StringSession(session_str), API_ID, API_HASH,
+        proxy=proxy,
         device_model=random.choice(REAL_DEVICES),
         system_version=random.choice(REAL_SYSTEM_VERSIONS),
         app_version=random.choice(REAL_APP_VERSIONS),
@@ -74,121 +54,96 @@ def create_telegram_client(session_str, proxy=None):
 
 
 def auth_required(func):
-    """Décorateur : vérifie que l'utilisateur est autorisé"""
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+    async def wrapper(update, context, *args, **kwargs):
         user_id = update.effective_user.id
         if user_id not in authorized_users:
-            await update.message.reply_text(
-                "⛔ Non autorisé. Contacte l'admin du bot."
-            )
-            logger.warning(f"Tentative d'accès non autorisé : user_id={user_id}")
+            await update.message.reply_text("⛔ Non autorisé.")
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
 
 
-# ========== GESTIONNAIRE DE COMPTES EXTERNES ==========
-
 class ReportingAccounts:
-    """Gère les comptes ajoutés via /add"""
-
     FILE_PATH = "reporting_accounts.json"
 
     def __init__(self):
         self.accounts = {}
         self.clients = {}
-        self._code_requests = {}
-        self._2fa_requests = {}
+        self._pending = {}  # {phone: {client, phone_code_hash, ...}}
 
     def load(self):
         if os.path.exists(self.FILE_PATH):
             try:
-                with open(self.FILE_PATH, "r") as f:
+                with open(self.FILE_PATH) as f:
                     self.accounts = json.load(f)
-                logger.info(f"📂 {len(self.accounts)} comptes externes chargés")
-            except Exception as e:
-                logger.error(f"❌ Erreur chargement {self.FILE_PATH}: {e}")
+                logger.info(f"📂 {len(self.accounts)} comptes chargés")
+            except:
                 self.accounts = {}
 
     def save(self):
-        try:
-            with open(self.FILE_PATH, "w") as f:
-                json.dump(self.accounts, f, indent=2)
-        except Exception as e:
-            logger.error(f"❌ Erreur sauvegarde {self.FILE_PATH}: {e}")
+        with open(self.FILE_PATH, "w") as f:
+            json.dump(self.accounts, f, indent=2)
 
     def add(self, phone, api_id, api_hash):
         self.accounts[phone] = {"api_id": int(api_id), "api_hash": api_hash}
         self.save()
 
     def remove(self, phone):
-        if phone in self.accounts:
-            del self.accounts[phone]
-            self.save()
-
-    def get(self, phone):
-        return self.accounts.get(phone)
+        self.accounts.pop(phone, None)
+        self.clients.pop(phone, None)
+        self._pending.pop(phone, None)
+        self.save()
 
     def get_active_clients(self):
-        return [(c, m) for c, m in self.clients.values()]
+        return list(self.clients.values())
 
     async def connect_all(self):
         loaded = 0
-        for phone, creds in self.accounts.items():
-            try:
-                session_data = db.get_account_session(phone) if creds.get("session") else None
-                if session_data:
-                    client = create_telegram_client(session_data)
+        for phone in list(self.accounts.keys()):
+            session_str = db.get_account_session(phone)
+            if session_str:
+                try:
+                    client = create_telegram_client(session_str)
                     await client.connect()
                     if await client.is_user_authorized():
                         me = await client.get_me()
                         self.clients[phone] = (client, me)
                         loaded += 1
-                        logger.info(f"✅ Compte externe connecté : {phone}")
-                        continue
-            except Exception as e:
-                logger.debug(f"⚠️ Session invalide pour {phone}: {e}")
-            logger.warning(f"⚠️ Compte {phone} non connecté (session manquante)")
+                except:
+                    pass
         return loaded
 
 
-# Instance globale
 reporting_accounts = ReportingAccounts()
 
 
-# ========== COMMANDES ==========
+# ==================== COMMANDES ====================
 
 @auth_required
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     await update.message.reply_text(
-        "🤖 **REGrand Bot actif**\n\n"
-        "Commandes :\n"
-        "• `/add +225XXXXXXXX` — Ajouter un compte externe\n"
-        "• `/co CODE` — Valider le code de connexion\n"
-        "• `/cod2 MOT_DE_PASSE` — Valider la double authentification\n"
-        "• `/status` — Voir les comptes connectés\n"
-        "• `/702 @username` — Signaler un compte\n"
-        "• `/del +225XXXXXXXX` — Supprimer un compte externe\n"
-        "• `/scrape` — Scraper des proxies\n"
-        "• `/reconnect` — Reconnecter tous les comptes\n"
-        "• `/help` — Cette aide",
+        "🤖 **REGrand Bot**\n\n"
+        "• `/add +225XXXXXXXX` — Ajouter un compte\n"
+        "• `/co CODE` — Valider le code reçu\n"
+        "• `/cod2 MDP` — Valider la 2FA\n"
+        "• `/status` — Voir les comptes\n"
+        "• `/702 @user` — Signaler\n"
+        "• `/del +225XXXXXXXX` — Supprimer\n"
+        "• `/scrape` — Scraper proxies\n"
+        "• `/reconnect` — Tout reconnecter",
         parse_mode='Markdown'
     )
 
-
 @auth_required
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_cmd(update, context):
     await start(update, context)
 
 
 @auth_required
-async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/add +225XXXXXXXX"""
+async def add_account(update, context):
+    """/add +225XXXXXXXX [api_id] [api_hash]"""
     if not context.args:
-        await update.message.reply_text(
-            "Usage : `/add +225XXXXXXXX`",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text("Usage : `/add +225XXXXXXXX`")
         return
 
     phone = context.args[0].strip()
@@ -196,7 +151,7 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phone = '+' + phone
 
     if not phone[1:].isdigit() or len(phone) < 8:
-        await update.message.reply_text("❌ Format invalide.", parse_mode='Markdown')
+        await update.message.reply_text("❌ Format invalide.")
         return
 
     api_id = API_ID
@@ -205,10 +160,11 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             api_id = int(context.args[1])
             api_hash = context.args[2]
-        except ValueError:
-            await update.message.reply_text("❌ API_ID doit être un nombre.", parse_mode='Markdown')
+        except:
+            await update.message.reply_text("❌ API_ID doit être un nombre.")
             return
 
+    # Si déjà connecté via session en base
     session_data = db.get_account_session(phone)
     if session_data:
         try:
@@ -217,16 +173,17 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if await client.is_user_authorized():
                 me = await client.get_me()
                 reporting_accounts.clients[phone] = (client, me)
-                username_display = me.username or "pas d'username"
+                uname = me.username or "pas d'username"
                 await update.message.reply_text(
-                    f"✅ Compte `{phone}` reconnecté !\n"
-                    f"👤 {me.first_name} (@{username_display})",
+                    f"✅ Compte `{phone}` reconnecté !\n👤 {me.first_name} (@{uname})",
                     parse_mode='Markdown'
                 )
                 return
         except:
             pass
 
+    # Nettoyer toute demande en attente pour ce numéro
+    reporting_accounts._pending.pop(phone, None)
     reporting_accounts.add(phone, api_id, api_hash)
 
     try:
@@ -237,110 +194,83 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 lang_code=random.choice(REAL_LANG_CODES))
         await client.connect()
 
-        if await client.is_user_authorized():
-            me = await client.get_me()
-            session_string = client.session.save()
-            db.update_account_session(phone, session_string)
-            reporting_accounts.clients[phone] = (client, me)
-            await update.message.reply_text(
-                f"✅ Compte `{phone}` déjà autorisé, session sauvegardée !",
-                parse_mode='Markdown'
-            )
-            return
-
+        # Envoyer le code
         sent = await client.send_code_request(phone)
-        phone_code_hash = sent.phone_code_hash
+        hash_code = sent.phone_code_hash
 
-        reporting_accounts._code_requests[phone] = {
+        reporting_accounts._pending[phone] = {
             "client": client,
-            "phone_code_hash": phone_code_hash,
-            "phone": phone,
-            "api_id": api_id,
-            "api_hash": api_hash,
+            "phone_code_hash": hash_code,
             "sent_at": datetime.now()
         }
 
         await update.message.reply_text(
             f"📱 Code envoyé à `{phone}`\n"
-            f"⏳ Utilise `/co CODE` pour valider.",
+            f"⏳ Utilise `/co CODE` pour valider dans les 5 min.",
             parse_mode='Markdown'
         )
         logger.info(f"📱 Code envoyé à {phone}")
+
     except PhoneNumberInvalidError:
         reporting_accounts.remove(phone)
-        await update.message.reply_text("❌ Numéro invalide.", parse_mode='Markdown')
+        await update.message.reply_text("❌ Numéro invalide.")
     except PhoneNumberFloodError:
-        await update.message.reply_text("❌ Trop de tentatives. Attends.", parse_mode='Markdown')
+        await update.message.reply_text("❌ Trop de tentatives. Attends.")
     except Exception as e:
-        logger.error(f"❌ Erreur envoi code à {phone}: {e}", exc_info=True)
+        logger.error(f"❌ Erreur: {e}", exc_info=True)
         reporting_accounts.remove(phone)
-        await update.message.reply_text(
-            f"❌ Erreur : `{str(e)[:200]}`",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text(f"❌ Erreur : `{str(e)[:200]}`")
+
 
 @auth_required
-async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def verify_code(update, context):
     """/co CODE"""
     if not context.args:
-        await update.message.reply_text("Usage : `/co CODE`", parse_mode='Markdown')
+        await update.message.reply_text("Usage : `/co CODE`")
         return
 
     code = context.args[0].strip()
 
-    if not reporting_accounts._code_requests:
+    if not reporting_accounts._pending:
         await update.message.reply_text(
-            "❌ Aucune demande en attente. Fais `/add +225XXXXXXXX` d'abord.",
-            parse_mode='Markdown'
+            "❌ Aucune demande en attente. Fais d'abord `/add +225XXXXXXXX`."
         )
         return
 
-    phone = list(reporting_accounts._code_requests.keys())[-1]
-    req = reporting_accounts._code_requests[phone]
+    phone = list(reporting_accounts._pending.keys())[-1]
+    pending = reporting_accounts._pending[phone]
 
-    client = req["client"]
-    phone_code_hash = req.get("phone_code_hash")
+    client = pending["client"]
+    phone_code_hash = pending["phone_code_hash"]
+    sent_at = pending.get("sent_at")
 
-    # Vérifier si le client est toujours connecté
+    # Si le client est déconnecté, on le reconnecte
     try:
         if not client.is_connected():
-            logger.warning(f"⚠️ Client déconnecté pour {phone}, reconnexion...")
             await client.connect()
     except:
         pass
 
-    # Si le code a expiré, tenter d'en renvoyer un NOUVEAU automatiquement
-    sent_at = req.get("sent_at")
-    if sent_at and (datetime.now() - sent_at).total_seconds() > 240:
+    # Vérifier l'expiration
+    if sent_at and (datetime.now() - sent_at).total_seconds() > 300:
+        # Essayer de renvoyer un code automatiquement
         try:
-            await update.message.reply_text(
-                f"🔄 Code précédent expiré, envoi d'un nouveau code à `{phone}`...",
-                parse_mode='Markdown'
-            )
-            # Renvoyer un code frais
+            await update.message.reply_text(f"🔄 Code expiré, renvoi d'un nouveau à `{phone}`...")
             sent = await client.send_code_request(phone)
-            new_hash = sent.phone_code_hash
-            reporting_accounts._code_requests[phone] = {
+            reporting_accounts._pending[phone] = {
                 "client": client,
-                "phone_code_hash": new_hash,
-                "phone": phone,
-                "api_id": req["api_id"],
-                "api_hash": req["api_hash"],
+                "phone_code_hash": sent.phone_code_hash,
                 "sent_at": datetime.now()
             }
             await update.message.reply_text(
                 f"📱 Nouveau code envoyé à `{phone}`\n"
-                f"⏳ Utilise `/co CODE` maintenant, il est frais !",
+                f"⏳ Utilise `/co CODE` maintenant !",
                 parse_mode='Markdown'
             )
             return
         except Exception as e:
-            logger.error(f"❌ Erreur renvoi code: {e}")
-            await update.message.reply_text(
-                f"❌ Impossible de renvoyer le code. Refais `/add {phone}`.",
-                parse_mode='Markdown'
-            )
-            del reporting_accounts._code_requests[phone]
+            await update.message.reply_text(f"❌ Renvoi impossible. Redis `/add {phone}`.")
+            reporting_accounts._pending.pop(phone, None)
             return
 
     try:
@@ -350,181 +280,162 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone_code_hash=phone_code_hash
         )
 
+        # Succès
         session_string = client.session.save()
         db.update_account_session(phone, session_string)
+        db.update_account_status(phone, True)
 
         me = await client.get_me()
         reporting_accounts.clients[phone] = (client, me)
+        reporting_accounts._pending.pop(phone, None)
 
-        del reporting_accounts._code_requests[phone]
-
-        username_display = me.username or "pas d'username"
+        uname = me.username or "pas d'username"
         await update.message.reply_text(
             f"✅ **Compte connecté !**\n"
             f"📱 `{phone}`\n"
-            f"👤 {me.first_name} (@{username_display})\n"
+            f"👤 {me.first_name} (@{uname})\n"
             f"🆔 ID: `{me.id}`",
             parse_mode='Markdown'
         )
         logger.info(f"✅ Compte {phone} connecté")
 
     except PhoneCodeInvalidError:
-        await update.message.reply_text("❌ Code invalide. Réessaie avec `/co CODE`", parse_mode='Markdown')
+        await update.message.reply_text("❌ Code invalide. Réessaie avec `/co CODE`.")
     except PhoneCodeExpiredError:
-        await update.message.reply_text(
-            f"❌ Code expiré. Le bot va tenter d'en renvoyer un...\n"
-            f"Refais `/add {phone}` pour recevoir un nouveau code.",
-            parse_mode='Markdown'
-        )
-        # On ne supprime pas la requête pour permettre le renvoi automatique
+        # Renvoi automatique
+        try:
+            await update.message.reply_text(f"🔄 Code expiré, renvoi d'un nouveau à `{phone}`...")
+            sent = await client.send_code_request(phone)
+            reporting_accounts._pending[phone] = {
+                "client": client,
+                "phone_code_hash": sent.phone_code_hash,
+                "sent_at": datetime.now()
+            }
+            await update.message.reply_text(
+                f"📱 Nouveau code envoyé ! Utilise `/co CODE`.",
+                parse_mode='Markdown'
+            )
+        except:
+            await update.message.reply_text(f"❌ Redis `/add {phone}`.")
+            reporting_accounts._pending.pop(phone, None)
     except SessionPasswordNeededError:
-        reporting_accounts._2fa_requests[phone] = {"client": client}
+        reporting_accounts._pending[phone]["need_2fa"] = True
         await update.message.reply_text(
-            "🔐 2FA requise. Utilise `/cod2 MOT_DE_PASSE`",
+            "🔐 2FA requise ! Utilise `/cod2 MOT_DE_PASSE`",
             parse_mode='Markdown'
         )
     except Exception as e:
-        logger.error(f"❌ Erreur vérification: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Erreur : `{str(e)[:200]}`", parse_mode='Markdown')
+        logger.error(f"❌ Erreur: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Erreur : `{str(e)[:200]}`")
+
 
 @auth_required
-async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def verify_2fa(update, context):
     """/cod2 MOT_DE_PASSE"""
     if not context.args:
-        await update.message.reply_text("Usage : `/cod2 MOT_DE_PASSE`", parse_mode='Markdown')
-        return
-
-    if not reporting_accounts._2fa_requests:
-        await update.message.reply_text("❌ Aucune demande 2FA.", parse_mode='Markdown')
+        await update.message.reply_text("Usage : `/cod2 MOT_DE_PASSE`")
         return
 
     password = context.args[0].strip()
-    phone = list(reporting_accounts._2fa_requests.keys())[-1]
-    req = reporting_accounts._2fa_requests[phone]
-    client = req["client"]
+
+    # Chercher un compte en attente de 2FA
+    phone = None
+    for p, data in reporting_accounts._pending.items():
+        if data.get("need_2fa"):
+            phone = p
+            break
+
+    if not phone:
+        await update.message.reply_text("❌ Aucune demande 2FA en attente.")
+        return
+
+    pending = reporting_accounts._pending[phone]
+    client = pending["client"]
 
     try:
         await client.sign_in(password=password)
         session_string = client.session.save()
         db.update_account_session(phone, session_string)
+        db.update_account_status(phone, True)
 
         me = await client.get_me()
         reporting_accounts.clients[phone] = (client, me)
+        reporting_accounts._pending.pop(phone, None)
 
-        del reporting_accounts._2fa_requests[phone]
-
-        username_display = me.username or "pas d'username"
+        uname = me.username or "pas d'username"
         await update.message.reply_text(
-            f"✅ Compte `{phone}` connecté (2FA) !\n"
-            f"👤 {me.first_name} (@{username_display})",
+            f"✅ **Compte connecté (2FA) !**\n"
+            f"📱 `{phone}`\n"
+            f"👤 {me.first_name} (@{uname})",
             parse_mode='Markdown'
         )
-        logger.info(f"✅ Compte {phone} connecté avec 2FA")
     except Exception as e:
-        logger.error(f"❌ Erreur 2FA: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Mot de passe 2FA invalide.", parse_mode='Markdown')
+        await update.message.reply_text(f"❌ Erreur 2FA : `{str(e)[:200]}`")
 
 
 @auth_required
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/status"""
+async def status(update, context):
     lines = ["**📊 Statut des comptes**\n"]
-
-    admin_count = 0
+    
     for phone, (client, me) in session_mgr.clients.items():
-        admin_count += 1
         uname = f"@{me.username}" if me and me.username else "pas d'username"
-        name = f"{me.first_name} {me.last_name or ''}" if me else "?"
-        lines.append(f"👑 **Admin #{admin_count}** : {name} ({uname})")
-
-    if admin_count == 0:
-        lines.append("👑 Aucun compte admin connecté")
-
-    ext_count = 0
+        name = f"{me.first_name}" if me else "?"
+        lines.append(f"👑 **Admin** : {name} ({uname})")
+    
+    if not session_mgr.clients:
+        lines.append("👑 Aucun admin connecté")
+    
     for phone, (client, me) in reporting_accounts.clients.items():
-        ext_count += 1
         uname = f"@{me.username}" if me and me.username else "pas d'username"
-        name = f"{me.first_name} {me.last_name or ''}" if me else "?"
-        lines.append(f"📱 **Externe #{ext_count}** : {phone} - {name} ({uname})")
-
-    if ext_count == 0:
+        name = f"{me.first_name}" if me else "?"
+        lines.append(f"📱 **Externe** : {phone} - {name} ({uname})")
+    
+    if not reporting_accounts.clients:
         lines.append("📱 Aucun compte externe connecté")
-
-    lines.append("")
-    lines.append(f"🔗 Proxys disponibles : {db.get_proxy_count()}")
-    lines.append(f"🎯 Cibles signalées : {db.get_target_count()}")
-
+    
+    lines.append(f"\n🔗 Proxys : {db.get_proxy_count()}")
+    lines.append(f"🎯 Cibles : {db.get_target_count()}")
+    
     await update.message.reply_text("\n".join(lines), parse_mode='Markdown')
 
 
 @auth_required
-async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def report(update, context):
     """/702 @username"""
     if not context.args:
-        await update.message.reply_text("Usage : `/702 @username`", parse_mode='Markdown')
+        await update.message.reply_text("Usage : `/702 @username`")
         return
 
-    target_username = context.args[0].strip()
+    target = context.args[0].strip()
+    all_clients = list(session_mgr.clients.values()) + list(reporting_accounts.clients.values())
 
-    admin_ids = set()
-    for phone, (client, me) in session_mgr.clients.items():
-        if me and me.id:
-            admin_ids.add(me.id)
-
-    admin_clients_list = await session_mgr.get_active_clients()
-    if admin_clients_list:
-        try:
-            client, _ = admin_clients_list[0]
-            target_entity = await client.get_entity(target_username)
-            if hasattr(target_entity, 'id') and target_entity.id in admin_ids:
-                await update.message.reply_text(
-                    "❌ Signalement BLOQUÉ ! Cet utilisateur est un admin.",
-                    parse_mode='Markdown'
-                )
-                return
-        except:
-            pass
-
-    all_clients = []
-    admin_clients = await session_mgr.get_active_clients()
-    all_clients.extend(admin_clients)
-    reporting_clients_list = reporting_accounts.get_active_clients()
-    all_clients.extend(reporting_clients_list)
-
-    if len(all_clients) < 1:
-        await update.message.reply_text(
-            "⚠️ Aucun compte disponible.",
-            parse_mode='Markdown'
-        )
+    if not all_clients:
+        await update.message.reply_text("⚠️ Aucun compte disponible.")
         return
 
     msg = await update.message.reply_text(
-        f"🎯 Signalement de `{target_username}`\n"
-        f"📱 {len(all_clients)} comptes...",
+        f"🎯 Signalement de `{target}`\n📱 {len(all_clients)} comptes...",
         parse_mode='Markdown'
     )
 
     try:
-        success = await reporter.coordinated_report(all_clients, target_username)
-        db.add_target(target_username)
-        db.increment_target_reports(target_username)
-
+        success = await reporter.coordinated_report(all_clients, target)
+        db.add_target(target)
+        db.increment_target_reports(target)
         await msg.edit_text(
-            f"✅ **Signalement terminé**\n"
-            f"🎯 `{target_username}`\n"
-            f"📊 {success}/{len(all_clients)}",
+            f"✅ **Terminé**\n🎯 `{target}`\n📊 {success}/{len(all_clients)}",
             parse_mode='Markdown'
         )
     except Exception as e:
-        logger.error(f"Erreur report: {e}", exc_info=True)
-        await msg.edit_text(f"❌ Erreur: {str(e)[:200]}", parse_mode='Markdown')
+        logger.error(f"Erreur: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Erreur: {str(e)[:200]}")
 
 
 @auth_required
-async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def remove_account(update, context):
     """/del +225XXXXXXXX"""
     if not context.args:
-        await update.message.reply_text("Usage : `/del +225XXXXXXXX`", parse_mode='Markdown')
+        await update.message.reply_text("Usage : `/del +225XXXXXXXX`")
         return
 
     phone = context.args[0].strip()
@@ -534,114 +445,78 @@ async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if phone in reporting_accounts.accounts:
         if phone in reporting_accounts.clients:
             try:
-                client, _ = reporting_accounts.clients[phone]
-                await client.disconnect()
+                c, _ = reporting_accounts.clients[phone]
+                await c.disconnect()
             except:
                 pass
-            del reporting_accounts.clients[phone]
         reporting_accounts.remove(phone)
-        await update.message.reply_text(f"🗑️ `{phone}` retiré.", parse_mode='Markdown')
+        await update.message.reply_text(f"🗑️ `{phone}` retiré.")
     else:
-        await update.message.reply_text(f"❌ `{phone}` introuvable.", parse_mode='Markdown')
+        await update.message.reply_text(f"❌ `{phone}` introuvable.")
 
 
 @auth_required
-async def scrape_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/scrape"""
-    msg = await update.message.reply_text("🕷️ Scraping des proxies...")
+async def scrape_proxies(update, context):
+    msg = await update.message.reply_text("🕷️ Scraping...")
     count = await proxy_scraper.scrape_and_store()
-    valid = db.get_proxy_count()
-    await msg.edit_text(f"✅ {count} nouveaux proxies. Total: {valid}", parse_mode='Markdown')
+    await msg.edit_text(f"✅ {count} proxies ajoutés. Total: {db.get_proxy_count()}")
 
 
 @auth_required
-async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/reconnect"""
+async def reconnect(update, context):
     msg = await update.message.reply_text("🔄 Reconnexion...")
-
     await session_mgr.disconnect_all()
-    admin_count = await session_mgr.load_all_active_accounts()
-    if admin_count is None:
-        admin_count = 0
-
+    admin_count = await session_mgr.load_all_active_accounts() or 0
     for phone in list(reporting_accounts.clients.keys()):
         try:
-            client, _ = reporting_accounts.clients[phone]
-            await client.disconnect()
+            c, _ = reporting_accounts.clients[phone]
+            await c.disconnect()
         except:
             pass
     reporting_accounts.clients.clear()
-    external_count = await reporting_accounts.connect_all()
-    if external_count is None:
-        external_count = 0
-
-    await msg.edit_text(
-        f"✅ Reconnecté: {admin_count + external_count} comptes",
-        parse_mode='Markdown'
-    )
+    ext_count = await reporting_accounts.connect_all() or 0
+    await msg.edit_text(f"✅ Reconnecté: {admin_count + ext_count} comptes")
 
 
-# ========== INITIALISATION ==========
+# ==================== INIT ====================
 
-async def post_init(app: Application):
-    """Fonction exécutée après le démarrage du bot"""
-    logger.info("🚀 Démarrage du bot...")
-
+async def post_init(app):
+    logger.info("🚀 Démarrage...")
     os.makedirs("sessions", exist_ok=True)
     reporting_accounts.load()
 
     admin_count = 0
     if SESSION_STRING:
         try:
-            logger.info("👤 Connexion du compte admin via SESSION_STRING...")
             client = create_telegram_client(SESSION_STRING)
             await client.connect()
             if await client.is_user_authorized():
                 me = await client.get_me()
-                logger.info(f"✅ Admin connecté: {me.first_name} (@{me.username}) - ID: {me.id}")
-
-                if me.id not in authorized_users:
-                    logger.warning(f"⚠️ ID {me.id} ajouté aux autorisés")
-                    authorized_users.add(me.id)
-
+                logger.info(f"✅ Admin: {me.first_name}")
+                authorized_users.add(me.id)
                 session_mgr.add_client_sync(f"admin_{me.id}", client, me)
                 admin_count = 1
-
-                phone_display = f"+{me.id}"
-                db.add_account(phone_display, API_ID, API_HASH)
-                db.update_account_session(phone_display, SESSION_STRING)
-                db.update_account_status(phone_display, True)
+                db.add_account(f"+{me.id}", API_ID, API_HASH)
+                db.update_account_session(f"+{me.id}", SESSION_STRING)
+                db.update_account_status(f"+{me.id}", True)
             else:
-                logger.error("❌ SESSION_STRING invalide ou expirée")
+                logger.error("❌ SESSION_STRING invalide")
         except Exception as e:
-            logger.error(f"❌ Erreur connexion admin: {e}")
-    else:
-        logger.warning("⚠️ Aucune SESSION_STRING configurée")
-        admin_count = await session_mgr.load_all_active_accounts()
-        if admin_count is None:
-            admin_count = 0
+            logger.error(f"❌ Erreur admin: {e}")
 
-    external_count = await reporting_accounts.connect_all()
-    if external_count is None:
-        external_count = 0
+    ext_count = await reporting_accounts.connect_all() or 0
 
     if db.get_proxy_count() == 0:
-        logger.info("🔌 Scraping des proxies...")
         try:
             await proxy_scraper.scrape_and_store()
-        except Exception as e:
-            logger.warning(f"⚠️ Scraping: {e}")
+        except:
+            pass
 
-    total = admin_count + external_count
-    logger.info(f"✅ Bot prêt: {total} comptes ({admin_count} admin + {external_count} externes)")
+    logger.info(f"✅ Bot prêt: {admin_count + ext_count} comptes")
 
 
 def main():
-    """Point d'entrée principal"""
-    logger.info("🔄 Initialisation du bot...")
-
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("add", add_account))
@@ -652,8 +527,6 @@ def main():
     app.add_handler(CommandHandler("del", remove_account))
     app.add_handler(CommandHandler("scrape", scrape_proxies))
     app.add_handler(CommandHandler("reconnect", reconnect))
-
-    logger.info("🔄 Démarrage du polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
