@@ -9,8 +9,8 @@ AUTHORIZED_USERS = [int(x) for x in os.getenv("AUTHORIZED_USERS", "").split(",")
   
 
 # ========== CONFIGURATION TELEGRAM API ==========
-DEFAULT_API_ID = int(os.environ.get("DEFAULT_API_ID", "0"))
-DEFAULT_API_HASH = os.environ.get("DEFAULT_API_HASH", "")
+DEFAULT_API_ID = int(os.environ.get("API_ID", "0"))
+DEFAULT_API_HASH = os.environ.get("API_HASH", "")
 
 # Session string (optionnelle, pour restoration)
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
