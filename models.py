@@ -1,7 +1,7 @@
-# models.py
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
+
 
 @dataclass
 class Account:
@@ -15,6 +15,7 @@ class Account:
     created_at: str
     last_used: Optional[str]
 
+
 @dataclass
 class Proxy:
     id: int
@@ -25,6 +26,7 @@ class Proxy:
     protocol: str  # socks5, http
     is_active: bool
     last_checked: Optional[str]
+
 
 @dataclass
 class Target:
