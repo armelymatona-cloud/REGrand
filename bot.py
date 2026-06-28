@@ -614,8 +614,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.add_target(target_username)
         db.increment_target_reports(target_username)
         
-        admin_count = len(admin_clients)
-        
         await msg.edit_text(
             f"✅ **Signalement terminé**\n"
             f"🎯 `{target_username}`\n"
@@ -705,8 +703,15 @@ async def post_init(app: Application):
                     logger.warning(f"⚠️ L'ID {me.id} n'est pas dans AUTHORIZED_USERS, ajout automatique")
                     authorized_users.add(me.id)
                 
+                # Stocker dans session_mgr pour qu'il soit utilisé par /702
                 session_mgr.add_client_sync(f"admin_{me.id}", client, me)
                 admin_count = 1
+                
+                # Sauvegarder aussi dans la DB
+                phone_display = f"+{me.id}" 
+                db.add_account(phone_display, DEFAULT_API_ID, DEFAULT_API_HASH)
+                db.update_account_session(phone_display, SESSION_STRING)
+                db.update_account_status(phone_display, True)
             else:
                 logger.error("❌ SESSION_STRING invalide ou expirée")
         except Exception as e:
@@ -723,7 +728,7 @@ async def post_init(app: Application):
     if external_count is None:
         external_count = 0
     
-    # 3. Scraper les proxies
+    # 3. Scraper les proxies si aucun en base
     if db.get_proxy_count() == 0:
         logger.info("🔌 Scraping des proxies...")
         try:
