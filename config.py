@@ -9,11 +9,9 @@ AUTHORIZED_USERS = [int(x) for x in os.getenv("AUTHORIZED_USERS", "").split(",")
   
 
 # ========== CONFIGURATION TELEGRAM API ==========
-DEFAULT_API_ID = int(os.environ.get("API_ID", "30062455"))
-DEFAULT_API_HASH = os.environ.get("API_HASH", "0745b6be4969fa770f3ca5493c8e797c")
-
-# Session string (optionnelle, pour restoration)
-SESSION_STRING = os.environ.get("SESSION_STRING", "1BJWap1wBuwkeR-K27u6AleUDiQnL87jV70campTgUfRL7zi9k-YKvR_b03AfWai22IlRIGX2ajoRXYw5T8q8PtHK62wY_s_i8XbZhAkC-BLfb3XmoIX-PW31e6GQ-ROfKhSGbMK755ZsH78RrQkUxfDgFU1lgjYpBo2BfKfF7ArmYbIJhMe0Eyg9BaLxew1e-Kn2qsGaF94ZiVoxdAHMJW3GEBAcYiXMQG3-fl2zZbvw26qbZCTDd9cXf5YEcFOUvguJz4dg2RmqcxSXlt80r25YzwplK62c6leKZrTeIT-_o1M4YKNh8m3XLAL6PViR6TPyCf6ujOeGr3u6Qln1MverhwB4sdM=")
+DEFAULT_API_ID = int(os.environ.get("API_ID"))  # Pas de fallback
+DEFAULT_API_HASH = os.environ.get("API_HASH")   # Pas de fallback
+SESSION_STRING = os.environ.get("SESSION_STRING")  # Pas de fallback
 
 # Vérifications au démarrage
 if not BOT_TOKEN:
