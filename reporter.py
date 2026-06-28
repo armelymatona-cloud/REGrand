@@ -1,105 +1,95 @@
-# reporter.py
+import logging
 import asyncio
 import random
-import logging
-from telethon.tl.functions.messages import ReportRequest
-from telethon.tl.types import (
-    InputReportReasonSpam, InputReportReasonViolence,
-    InputReportReasonPornography, InputReportReasonChildAbuse,
-    InputReportReasonOther, InputReportReasonCopyright
-)
-from database import Database
+from telethon.tl.functions.messages import ReportPeer, ReportSpam
+from telethon.tl.types import InputReportReasonSpam
+from telethon.tl.functions.contacts import Block, Unblock
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class Reporter:
-    REASONS = [
-        InputReportReasonSpam,
-        InputReportReasonViolence,
-        InputReportReasonPornography,
-        InputReportReasonChildAbuse,
-        InputReportReasonOther,
-        InputReportReasonCopyright,
-    ]
+    """Gère le signalement coordonné de comptes Telegram"""
     
-    MESSAGES = [
-        "Ce compte spamme massivement des utilisateurs",
-        "Envoi de contenu violent et haineux",
-        "Compte frauduleux, usurpation d'identité",
-        "Harcèlement organisé envers plusieurs personnes",
-        "Contenu pédopornographique signalé",
-        "Arnaque financière et phishing",
-        "Diffusion de logiciels malveillants",
-        "Compte bot utilisé pour de la désinformation",
-    ]
-    
-    def __init__(self, db: Database):
+    def __init__(self, db):
         self.db = db
     
-    async def report_user(self, client, target, reason=None, message=None):
-        """Signale un utilisateur"""
-        try:
-            reason = reason or random.choice(self.REASONS)()
-            message = message or random.choice(self.MESSAGES)
-            
-            # Résout l'entité (username ou ID)
-            entity = await client.get_entity(target)
-            
-            # Récupère des messages récents
-            from telethon.tl.functions.messages import GetHistoryRequest
-            history = await client(GetHistoryRequest(
-                peer=entity,
-                limit=3,
-                offset_id=0,
-                offset_date=None,
-                add_offset=0,
-                max_id=0,
-                min_id=0,
-                hash=0
-            ))
-            
-            msg_ids = [m.id for m in history.messages if m]
-            if not msg_ids:
-                msg_ids = [1]  # Fallback
-            
-            result = await client(ReportRequest(
-                peer=entity,
-                id=msg_ids,
-                reason=reason,
-                message=message
-            ))
-            
-            logger.info(f"✅ Signalé {target}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Erreur signalement {target}: {e}")
-            return False
-    
-    async def coordinated_report(self, clients: list, target: str,
-                                  delay_range: tuple = (3, 20), min_delay: float = 0.5):
-        """Signalement désynchronisé"""
+    async def coordinated_report(self, clients, target_username):
+        """
+        Signale un utilisateur avec plusieurs comptes simultanément
+        
+        Args:
+            clients: Liste de tuples (TelegramClient, User)
+            target_username: Nom d'utilisateur cible (@username)
+        
+        Returns:
+            int: Nombre de signalements réussis
+        """
+        target = target_username.strip()
+        if target.startswith('@'):
+            target = target[1:]
+        
+        logger.info(f"🎯 Signalement coordonné de @{target} avec {len(clients)} comptes")
+        
+        success = 0
         tasks = []
         
-        for i, (phone, client) in enumerate(clients):
-            delay = random.uniform(max(delay_range[0], min_delay * i), delay_range[1] + i * 2)
-            reason = random.choice(self.REASONS)()
-            message = random.choice(self.MESSAGES)
-            
-            task = asyncio.create_task(
-                self._delayed_report(client, target, delay, reason, message, phone)
-            )
-            tasks.append(task)
+        for client, me in clients:
+            tasks.append(self._report_single(client, me, target))
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        success = sum(1 for r in results if r is True)
         
-        logger.info(f"🎯 Coordonné: {success}/{len(clients)} sur {target}")
+        for r in results:
+            if r is True:
+                success += 1
+        
+        logger.info(f"✅ Signalement terminé: {success}/{len(clients)} pour @{target}")
         return success
     
-    async def _delayed_report(self, client, target, delay, reason, message, phone):
-        await asyncio.sleep(delay)
-        result = await self.report_user(client, target, reason, message)
-        logger.info(f"⏱ {phone} après {delay:.1f}s: {'OK' if result else 'FAIL'}")
-        return result
+    async def _report_single(self, client, me, target_username):
+        """Signale avec un seul compte"""
+        try:
+            try:
+                target_entity = await client.get_entity(target_username)
+            except Exception as e:
+                logger.warning(f"⚠️ Impossible de résoudre @{target_username}: {e}")
+                return False
+            
+            # Méthode 1: ReportPeer
+            try:
+                result = await client(ReportPeer(
+                    peer=target_entity,
+                    reason=InputReportReasonSpam(),
+                    message="Spam account"
+                ))
+                if result:
+                    logger.debug(f"✅ ReportPeer réussi via {me.first_name}")
+                    await asyncio.sleep(random.uniform(2, 5))
+                    return True
+            except Exception as e1:
+                logger.debug(f"⚠️ Méthode 1 échouée: {e1}")
+            
+            # Méthode 2: ReportSpam
+            try:
+                result = await client(ReportSpam(peer=target_entity))
+                logger.debug(f"✅ ReportSpam réussi via {me.first_name}")
+                await asyncio.sleep(random.uniform(2, 5))
+                return True
+            except Exception as e2:
+                logger.debug(f"⚠️ Méthode 2 échouée: {e2}")
+            
+            # Méthode 3: Block/Unblock
+            try:
+                await client(Block(id=target_entity))
+                await asyncio.sleep(1)
+                await client(Unblock(id=target_entity))
+                logger.debug(f"✅ Block/Unblock réussi via {me.first_name}")
+                return True
+            except Exception as e3:
+                logger.debug(f"⚠️ Méthode 3 échouée: {e3}")
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur signalement avec {me.first_name}: {e}")
+            return False
