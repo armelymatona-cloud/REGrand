@@ -10,8 +10,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from telethon import TelegramClient, functions, types
 from telethon.errors import *
 from telethon.sessions import StringSession
-from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
-from telethon.tl.functions.messages import CreateChat, AddChatUser, DeleteChatUser
 from config import BOT_TOKEN, AUTHORIZED_USERS, API_ID, API_HASH, SESSION_STRING
 from database import Database
 from session_mgr import SessionManager
