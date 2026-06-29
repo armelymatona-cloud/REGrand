@@ -10,7 +10,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from telethon import TelegramClient, functions, types
 from telethon.errors import *
 from telethon.sessions import StringSession
-from config import BOT_TOKEN, AUTHORIZED_USERS, DEFAULT_API_ID, DEFAULT_API_HASH, SESSION_STRING
+from config import BOT_TOKEN, AUTHORIZED_USERS, API_ID, API_HASH, SESSION_STRING
 from database import Database
 from session_mgr import SessionManager
 from reporter import Reporter
@@ -171,8 +171,8 @@ def create_telegram_client(session_string=None):
     
     client = TelegramClient(
         session,
-        DEFAULT_API_ID,
-        DEFAULT_API_HASH,
+        API_ID,
+        API_HASH,
         device_model=fp["device_model"],
         system_version=fp["system_version"],
         app_version=fp["app_version"],
@@ -283,10 +283,8 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Envoi du code
         sent = await client.send_code_request(phone)
         
-        # Stocker le pending
         _pending[phone] = {
             'client': client,
             'phone_code_hash': sent.phone_code_hash,
@@ -295,12 +293,11 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'type': 'reporting'
         }
         
-        # PERSISTER DANS LA DB POUR RÉCUPÉRATION
         db.set_pending_login(
             update.effective_user.id,
             phone,
-            DEFAULT_API_ID,
-            DEFAULT_API_HASH,
+            API_ID,
+            API_HASH,
             "code_sent",
             sent.phone_code_hash
         )
@@ -331,8 +328,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /co 12345
-    Vérifie le code reçu.
-    Gère le cas où le client s'est déconnecté entre temps.
     """
     if not context.args:
         await update.message.reply_text("Usage: `/co 12345`", parse_mode='Markdown')
@@ -341,7 +336,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = context.args[0].strip()
     user_id = update.effective_user.id
     
-    # ===== ÉTAPE 1: Chercher dans _pending (mémoire) =====
     phone_to_verify = None
     pending_data = None
     
@@ -351,7 +345,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_data = data
             break
     
-    # ===== ÉTAPE 2: Si pas en mémoire, restaurer depuis la DB =====
     if not pending_data:
         pending_db = db.get_pending_login(user_id)
         if pending_db:
@@ -359,7 +352,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"🔄 Restauration depuis DB pour {phone_to_verify}")
             
             try:
-                # Créer un NOUVEAU client
                 client = create_telegram_client()
                 await client.connect()
                 
@@ -371,20 +363,18 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'type': 'reporting'
                 }
                 
-                # Le remettre en mémoire
                 _pending[phone_to_verify] = pending_data
                 
             except Exception as e:
-                logger.error(f"❌ Erreur restauration pending: {e}")
+                logger.error(f"❌ Erreur restauration: {e}")
                 await update.message.reply_text(
-                    "❌ Impossible de restaurer la connexion.\n"
-                    "Fais `/add +225...` à nouveau.",
+                    "❌ Impossible de restaurer. Fais `/add +225...` à nouveau.",
                     parse_mode='Markdown'
                 )
                 return
         else:
             await update.message.reply_text(
-                "❌ Aucune connexion en attente.\nFais `/add +225...` d'abord.",
+                "❌ Aucune connexion en attente. Fais `/add +225...` d'abord.",
                 parse_mode='Markdown'
             )
             return
@@ -404,35 +394,28 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         client = pending_data['client']
         
-        # ===== ÉTAPE 3: Vérifier si le client est connecté =====
         if not client.is_connected():
-            logger.info(f"🔄 Reconnexion du client pour {phone_to_verify}...")
+            logger.info(f"🔄 Reconnexion pour {phone_to_verify}...")
             try:
                 await client.connect()
-                logger.info(f"✅ Client reconnecté pour {phone_to_verify}")
-            except Exception as e:
-                logger.error(f"❌ Échec reconnexion: {e}")
-                # Si la reconnexion échoue, créer un nouveau client
+            except:
                 try:
-                    logger.info("🔄 Création d'un nouveau client...")
                     new_client = create_telegram_client()
                     await new_client.connect()
                     await new_client.send_code_request(phone_to_verify)
                     await msg.edit_text(
-                        f"❌ La session a expiré. Un nouveau code a été envoyé à `{phone_to_verify}`.\n"
+                        f"❌ Session expirée. Nouveau code envoyé à `{phone_to_verify}`.\n"
                         f"Utilise `/co NOUVEAU_CODE`",
                         parse_mode='Markdown'
                     )
                     return
                 except Exception as e2:
                     await msg.edit_text(
-                        f"❌ Erreur: ```{str(e2)[:200]}```\n"
-                        f"Refais `/add +225...`",
+                        f"❌ Erreur: ```{str(e2)[:200]}```\nRefais `/add`",
                         parse_mode='Markdown'
                     )
                     return
         
-        # ===== ÉTAPE 4: Tenter la connexion =====
         try:
             await client.sign_in(
                 phone=phone_to_verify,
@@ -440,10 +423,8 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 phone_code_hash=pending_data['phone_code_hash']
             )
             
-            # SUCCÈS !
             me = await client.get_me()
             
-            # Vérifier si c'est un admin
             if me.id in authorized_users:
                 await msg.edit_text(
                     f"⛔ Compte ADMIN détecté. Déjà disponible.",
@@ -455,7 +436,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.remove_pending_login(user_id)
                 return
             
-            # Sauvegarder la session
             session_string = client.session.save()
             reporting_accounts.add(phone_to_verify, session_string, {
                 "id": me.id,
@@ -464,7 +444,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             reporting_accounts.clients[phone_to_verify] = (client, me)
             
-            # Nettoyer
             if phone_to_verify in _pending:
                 del _pending[phone_to_verify]
             db.remove_pending_login(user_id)
@@ -486,11 +465,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(f"❌ Code invalide. `/co CODE`", parse_mode='Markdown')
         except PhoneCodeExpiredError:
             await msg.edit_text(
-                f"❌ Code expiré.\n\n"
-                f"**Raison :** Telegram bloque car le code a été partagé "
-                f"depuis ton compte principal.\n\n"
-                f"**Solution :** Utilise un **autre compte Telegram** "
-                f"avec `/add +AUTRE_NUMERO`",
+                f"❌ Code expiré.\n\nUtilise un **autre compte Telegram** avec `/add +AUTRE_NUMERO`",
                 parse_mode='Markdown'
             )
             if phone_to_verify in _pending:
@@ -503,7 +478,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         logger.error(f"❌ Erreur verify_code: {e}", exc_info=True)
-        await msg.edit_text(f"❌ Erreur générale: {str(e)[:200]}", parse_mode='Markdown')
+        await msg.edit_text(f"❌ Erreur: {str(e)[:200]}", parse_mode='Markdown')
 
 
 @auth_required
@@ -516,7 +491,6 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = ' '.join(context.args)
     user_id = update.effective_user.id
     
-    # Chercher dans _pending
     phone_to_verify = None
     pending_data = None
     for phone, data in list(_pending.items()):
@@ -525,7 +499,6 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_data = data
             break
     
-    # Fallback DB
     if not pending_data:
         pending_db = db.get_pending_login(user_id)
         if pending_db:
@@ -636,7 +609,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_username = context.args[0].strip()
     target_clean = target_username.lstrip('@').lower()
     
-    # Protection admin
     admin_ids = set(authorized_users)
     admin_usernames = set()
     
@@ -663,7 +635,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Récupérer tous les comptes
     all_clients = []
     admin_clients = await session_mgr.get_active_clients()
     all_clients.extend(admin_clients)
@@ -747,7 +718,6 @@ async def post_init(app: Application):
     logger.info("🚀 Démarrage du bot...")
     os.makedirs("sessions", exist_ok=True)
     
-    # Compte admin
     admin_count = 0
     if SESSION_STRING:
         try:
@@ -767,10 +737,8 @@ async def post_init(app: Application):
             logger.error(f"❌ Erreur admin: {e}")
             admin_count = await session_mgr.load_all_active_accounts() or 0
     
-    # Comptes externes
     external_count = await reporting_accounts.connect_all() or 0
     
-    # Proxies
     if db.get_proxy_count() == 0:
         logger.info("🔌 Scraping proxies...")
         try:
