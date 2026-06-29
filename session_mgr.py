@@ -1,20 +1,16 @@
 import logging
 import os
-import json
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
-from config import SESSIONS_DIR, ACCOUNTS_FILE
+from config import SESSIONS_DIR
 from utils import create_telegram_client
 
 logger = logging.getLogger(__name__)
 
 
 class SessionManager:
-    """Gère les sessions des comptes administrateurs (stockées en DB)."""
-
     def __init__(self, db):
         self.db = db
-        self.clients = {}  # {phone_or_key: (client, me)}
+        self.clients = {}
 
     def add_client_sync(self, key: str, client: TelegramClient, me):
         self.clients[key] = (client, me)
@@ -42,21 +38,19 @@ class SessionManager:
             await self.remove_client(key)
 
     async def load_all_active_accounts(self) -> int:
-        """Charge tous les comptes actifs depuis la DB."""
-        # Cette méthode suppose que la DB a une table 'accounts'
-        # avec phone et session_string
         try:
             conn = self.db._connect()
             cur = conn.cursor()
             cur.execute("SELECT phone, session_string FROM accounts WHERE active = 1")
             rows = cur.fetchall()
             conn.close()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Erreur chargement DB: {e}")
             rows = []
 
         loaded = 0
         for phone, session_str in rows:
-            if not session_str:
+            if not session_str or len(session_str) < 10:
                 continue
             try:
                 client = create_telegram_client(session_str)
@@ -68,13 +62,9 @@ class SessionManager:
                     logger.info(f"✅ Session restaurée: {phone}")
                 else:
                     logger.warning(f"⚠️ Session invalide: {phone}")
-                    # Optionnel: désactiver le compte
                     try:
                         conn = self.db._connect()
-                        conn.execute(
-                            "UPDATE accounts SET active = 0 WHERE phone = ?",
-                            (phone,)
-                        )
+                        conn.execute("UPDATE accounts SET active = 0 WHERE phone = ?", (phone,))
                         conn.commit()
                         conn.close()
                     except Exception:
@@ -86,5 +76,4 @@ class SessionManager:
         return loaded
 
     async def get_active_clients(self) -> list:
-        """Retourne la liste des (client, me) actifs."""
         return [(c, m) for c, m in self.clients.values()]
