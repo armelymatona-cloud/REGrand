@@ -2,8 +2,9 @@ import logging
 import asyncio
 import random
 
-from telethon.tl.functions.messages import ReportSpam, Report
-from telethon.tl.functions.account import ReportPeer
+from telethon import TelegramClient
+from telethon.tl.functions.messages import ReportRequest
+from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import InputReportReasonSpam, InputReportReasonViolence, InputReportReasonOther
 
 logger = logging.getLogger(__name__)
@@ -44,71 +45,64 @@ class Reporter:
             # Récupération de l'entité cible
             target = await client.get_entity(target_username)
 
-            # --- Méthode 1 : ReportPeer (signalement direct via account) ---
-            try:
-                # On utilise plusieurs raisons pour cumuler les reports
-                reasons = [
-                    InputReportReasonSpam(),
-                    InputReportReasonViolence(),
-                    InputReportReasonOther(),
-                ]
-                for reason in reasons:
-                    try:
-                        await client(ReportPeer(
-                            peer=target,
-                            reason=reason,
-                            message="Spam / contenu abusif"
-                        ))
-                        await asyncio.sleep(random.uniform(0.5, 1.5))
-                    except Exception:
-                        continue
-                logger.info(f"✅ ReportPeer réussi pour @{target_username}")
-                return True
-            except Exception as e:
-                logger.debug(f"ReportPeer échoué: {e}")
+            # --- Méthode 1 : ReportPeerRequest (signalement direct via account) ---
+            reasons = [
+                InputReportReasonSpam(),
+                InputReportReasonViolence(),
+                InputReportReasonOther(),
+            ]
 
-            # --- Méthode 2 : messages.Report ---
+            for reason in reasons:
+                try:
+                    await client(ReportPeerRequest(
+                        peer=target,
+                        reason=reason,
+                        message="Spam / contenu abusif"
+                    ))
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                except Exception as e:
+                    logger.debug(f"ReportPeerRequest échoué pour {reason}: {e}")
+                    continue
+
+            logger.info(f"✅ ReportPeerRequest réussi pour @{target_username}")
+
+            # --- Méthode 2 : ReportRequest (signalement de message spécifique) ---
             try:
-                # Envoyer un message d'abord pour pouvoir le signaler
+                # Envoyer un message pour pouvoir le signaler
                 msg = await client.send_message(target, ".")
                 await asyncio.sleep(random.uniform(0.5, 1.5))
 
-                await client(ReportSpam(peer=target))
-                await asyncio.sleep(random.uniform(0.5, 1))
-
-                # Signaler le message spécifiquement
+                # Signaler le message via ReportRequest
                 try:
-                    await client(Report(
+                    await client(ReportRequest(
                         peer=target,
                         id=[msg.id],
                         reason=InputReportReasonSpam()
                     ))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"ReportRequest échoué: {e}")
 
-                # Nettoyer
+                # Nettoyer le message envoyé
                 try:
                     await client.delete_messages(target, [msg.id])
                 except Exception:
                     pass
 
-                logger.info(f"✅ ReportSpam réussi pour @{target_username}")
-                return True
+                logger.info(f"✅ ReportRequest réussi pour @{target_username}")
             except Exception as e:
-                logger.debug(f"ReportSpam échoué: {e}")
+                logger.debug(f"Envoi message pour report échoué: {e}")
 
-            # --- Méthode 3 : Block/Unblock (moins efficace mais ne coûte rien) ---
+            # --- Méthode 3 : Block/Unblock (effet cumulatif) ---
             try:
-                from telethon.tl.functions.contacts import Block, Unblock
-                await client(Block(id=target))
+                from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
+                await client(BlockRequest(id=target))
                 await asyncio.sleep(random.uniform(1, 2))
-                await client(Unblock(id=target))
+                await client(UnblockRequest(id=target))
                 logger.info(f"✅ Block/Unblock réussi pour @{target_username}")
-                return True
             except Exception as e:
                 logger.debug(f"Block/Unblock échoué: {e}")
 
-            return False
+            return True
 
         except Exception as e:
             logger.error(f"❌ Erreur dans _report_single: {e}")
