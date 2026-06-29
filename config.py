@@ -5,7 +5,7 @@ import sys
 BOT_TOKEN = os.environ.get("BOT_TOKEN", )
 
 # Liste des IDs Telegram autorisés à utiliser le bot
-AUTHORIZED_USERS = [int(x.strip()) for x in AUTHORIZED_USERS_RAW.split(",") if x.strip()]
+AUTHORIZED_USERS = [int(x.strip()) for x in AUTHORIZED_USERS.split(",") if x.strip()]
 
 # ========== CONFIGURATION TELEGRAM API ==========
 API_ID = int(os.environ.get("API_ID", ))
