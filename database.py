@@ -10,8 +10,6 @@ DB_FILE = "database.json"
 
 
 class Database:
-    """Base de données JSON utilisant les dataclasses de models.py"""
-    
     def __init__(self, db_file=DB_FILE):
         self.db_file = db_file
         self.data = self._load()
@@ -29,11 +27,7 @@ class Database:
             "targets": {},
             "proxies": [],
             "pending_logins": {},
-            "next_id": {
-                "account": 1,
-                "target": 1,
-                "proxy": 1
-            }
+            "next_id": {"account": 1, "target": 1, "proxy": 1}
         }
     
     def _save(self):
@@ -43,12 +37,10 @@ class Database:
         except Exception as e:
             logger.error(f"Erreur sauvegarde DB: {e}")
     
-    # ===== ACCOUNTS =====
     def add_account(self, phone, api_id, api_hash):
         if phone not in self.data["accounts"]:
             acc_id = self.data["next_id"]["account"]
             self.data["next_id"]["account"] = acc_id + 1
-            
             self.data["accounts"][phone] = {
                 "id": acc_id,
                 "phone": phone,
@@ -80,11 +72,9 @@ class Database:
             del self.data["accounts"][phone]
             self._save()
     
-    def get_account(self, phone) -> Account:
+    def get_account(self, phone):
         acc = self.data["accounts"].get(phone)
-        if acc:
-            return Account(**acc)
-        return None
+        return Account(**acc) if acc else None
     
     def get_all_accounts(self):
         return [Account(**a) for a in self.data["accounts"].values()]
@@ -96,7 +86,6 @@ class Database:
         acc = self.data["accounts"].get(phone)
         return acc.get("session_string", "") if acc else None
     
-    # ===== PENDING LOGINS =====
     def set_pending_login(self, user_id, phone, api_id, api_hash, status, phone_code_hash=""):
         self.data["pending_logins"][str(user_id)] = {
             "user_id": user_id,
@@ -117,12 +106,10 @@ class Database:
             del self.data["pending_logins"][str(user_id)]
             self._save()
     
-    # ===== TARGETS =====
     def add_target(self, target_id):
         if target_id not in self.data["targets"]:
             tgt_id = self.data["next_id"]["target"]
             self.data["next_id"]["target"] = tgt_id + 1
-            
             self.data["targets"][target_id] = {
                 "id": tgt_id,
                 "target_id": target_id,
@@ -138,45 +125,17 @@ class Database:
             self.data["targets"][target_id]["last_reported"] = datetime.now().isoformat()
             self._save()
     
-    # ===== PROXIES =====
     def add_proxies(self, proxy_list):
-        """Ajoute une liste de proxies (format 'ip:port')"""
         existing = set(self.data["proxies"])
         new_count = 0
-        
         for p in proxy_list:
             if p not in existing:
-                proxy_id = self.data["next_id"]["proxy"]
-                self.data["next_id"]["proxy"] = proxy_id + 1
-                
-                # Déterminer le protocole
-                protocol = "http"
-                parts = p.split(":")
-                if len(parts) >= 2:
-                    port = int(parts[1])
-                    if port in (1080, 1081):
-                        protocol = "socks5"
-                
-                proxy_entry = {
-                    "id": proxy_id,
-                    "address": parts[0],
-                    "port": int(parts[1]) if len(parts) >= 2 else 0,
-                    "username": None,
-                    "password": None,
-                    "protocol": protocol,
-                    "is_active": True,
-                    "last_checked": None
-                }
-                
-                # On garde juste la chaîne "ip:port" dans la liste pour compatibilité
                 existing.add(p)
                 self.data["proxies"].append(p)
                 new_count += 1
-        
         if new_count > 0:
             logger.info(f"Batch: {new_count} proxies ajoutés")
             self._save()
-        
         return new_count
     
     def get_proxy_count(self):
