@@ -4,7 +4,6 @@ import os
 import sys
 import random
 import json
-from datetime import datetime
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -12,7 +11,7 @@ from telethon import TelegramClient
 from telethon.errors import (
     PhoneCodeInvalidError, PhoneCodeExpiredError,
     PasswordHashInvalidError, FloodWaitError,
-    SessionPasswordNeededError, PhoneNumberUnoccupiedError
+    SessionPasswordNeededError
 )
 from telethon.sessions import StringSession
 
@@ -23,7 +22,6 @@ from reporter import Reporter
 from proxy_scraper import ProxyScraper
 from utils import create_telegram_client
 
-# ========== LOGGING ==========
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -31,24 +29,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ========== INITIALISATION ==========
 db = Database()
 session_mgr = SessionManager(db)
 reporter = Reporter(db)
 proxy_scraper = ProxyScraper(db)
 
 authorized_users = set(AUTHORIZED_USERS)
-_pending = {}  # {chat_id: {"phone": ..., "client": ..., "msg": ...}}
+_pending = {}
 
 
 class ReportingAccounts:
-    """Gère les comptes de signalement externes (stockés dans un fichier JSON)."""
-
     FILE_PATH = ACCOUNTS_FILE
 
     def __init__(self):
-        self.accounts = {}   # {phone: session_string}
-        self.clients = {}    # {phone: (client, me)}
+        self.accounts = {}
+        self.clients = {}
         self._load()
 
     def _load(self):
@@ -58,7 +53,7 @@ class ReportingAccounts:
                     self.accounts = json.load(f)
                 logger.info(f"📂 {len(self.accounts)} comptes externes chargés")
             except Exception as e:
-                logger.error(f"❌ Erreur chargement comptes externes: {e}")
+                logger.error(f"❌ Erreur chargement: {e}")
                 self.accounts = {}
         else:
             self.accounts = {}
@@ -68,7 +63,7 @@ class ReportingAccounts:
             with open(self.FILE_PATH, "w") as f:
                 json.dump(self.accounts, f, indent=2)
         except Exception as e:
-            logger.error(f"❌ Erreur sauvegarde comptes externes: {e}")
+            logger.error(f"❌ Erreur sauvegarde: {e}")
 
     def add(self, phone: str, session_string: str):
         self.accounts[phone] = session_string
@@ -85,16 +80,13 @@ class ReportingAccounts:
             except Exception:
                 pass
             del self.clients[phone]
-        logger.info(f"🗑️ Compte externe retiré: {phone}")
 
     async def connect_all(self) -> int:
-        """Connecte tous les comptes externes avec des proxies aléatoires."""
         connected = 0
         for phone, session_str in self.accounts.items():
             if phone in self.clients:
-                continue  # déjà connecté
+                continue
             try:
-                # Récupérer des proxies aléatoires
                 proxies = db.get_random_proxies(3)
                 proxy = None
                 if proxies:
@@ -109,24 +101,21 @@ class ReportingAccounts:
                     me = await client.get_me()
                     self.clients[phone] = (client, me)
                     connected += 1
-                    logger.info(f"✅ Compte externe connecté: {phone} ({me.first_name})")
+                    logger.info(f"✅ Externe connecté: {phone} ({me.first_name})")
                 else:
-                    logger.warning(f"⚠️ Compte externe non autorisé: {phone}")
+                    logger.warning(f"⚠️ Externe non autorisé: {phone}")
             except Exception as e:
-                logger.error(f"❌ Erreur connexion compte externe {phone}: {e}")
-
+                logger.error(f"❌ Erreur connexion {phone}: {e}")
         logger.info(f"📊 {connected}/{len(self.accounts)} comptes externes connectés")
         return connected
 
     def get_active_clients(self) -> list:
-        """Retourne la liste des (client, me) des comptes externes actifs."""
         return [(c, m) for c, m in self.clients.values()]
 
 
 reporting_accounts = ReportingAccounts()
 
 
-# ========== DÉCORATEUR AUTH ==========
 def auth_required(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -136,8 +125,6 @@ def auth_required(func):
         return await func(update, context)
     return wrapper
 
-
-# ========== HANDLERS ==========
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -158,7 +145,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ajoute un compte externe par numéro de téléphone."""
     if not context.args:
         await update.message.reply_text("Usage: `/add +225XXXXXXXX`", parse_mode="Markdown")
         return
@@ -176,7 +162,8 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"📱 Envoi du code vers `{phone}`...", parse_mode="Markdown")
 
     try:
-        client = create_telegram_client(StringSession(random.randbytes(64).hex()))
+        random_bytes = os.urandom(64).hex()
+        client = create_telegram_client(StringSession(random_bytes))
         await client.connect()
 
         sent = await client.send_code_request(phone)
@@ -204,7 +191,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Valide le code reçu par SMS/Telegram."""
     chat_id = update.effective_chat.id
 
     if chat_id not in _pending:
@@ -228,7 +214,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         me = await client.get_me()
         session_str = StringSession.save(client.session)
 
-        # Sauvegarde du compte externe
         reporting_accounts.add(phone, session_str)
         reporting_accounts.clients[phone] = (client, me)
 
@@ -236,7 +221,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pending.pop(chat_id, None)
 
     except SessionPasswordNeededError:
-        # 2FA requis
         await msg.edit_text(
             f"🔐 2FA requis pour `{phone}`.\n"
             f"Utilise `/cod2 MOT_DE_PASSE`",
@@ -257,7 +241,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Valide le mot de passe 2FA."""
     chat_id = update.effective_chat.id
 
     if chat_id not in _pending:
@@ -295,12 +278,10 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Affiche le statut de tous les comptes."""
     admin_clients = await session_mgr.get_active_clients()
     reporting_clients = reporting_accounts.get_active_clients()
 
     msg = f"**📊 Status**\n\n"
-
     msg += f"**ADMINS ({len(admin_clients)}):**\n"
     for client, me in admin_clients:
         uname = f"(@{me.username})" if me.username else ""
@@ -312,13 +293,11 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"✅ `{me.id}` {me.first_name or '?'} {uname}\n"
 
     msg += f"\n🔌 Proxies en base: {db.get_proxy_count()}"
-
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 @auth_required
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lance un signalement coordonné."""
     if not context.args:
         await update.message.reply_text("Usage: `/702 @username`", parse_mode="Markdown")
         return
@@ -326,7 +305,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = context.args[0].strip()
     target_clean = target.lstrip("@").lower()
 
-    # Vérifier que la cible n'est pas un admin
     admin_ids = set(authorized_users)
     admin_usernames = set()
 
@@ -350,7 +328,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ `{target}` est un admin. Bloqué.", parse_mode="Markdown")
         return
 
-    # Rassembler tous les clients
     all_clients = []
     all_clients.extend(await session_mgr.get_active_clients())
     all_clients.extend(reporting_accounts.get_active_clients())
@@ -378,7 +355,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Supprime un compte externe."""
     if not context.args:
         await update.message.reply_text("Usage: `/del +225XXXXXXXX`", parse_mode="Markdown")
         return
@@ -394,52 +370,33 @@ async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def scrape_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Scrape des proxies depuis les sources publiques."""
     msg = await update.message.reply_text("🕷️ Scraping des proxies...")
     count = await proxy_scraper.scrape_and_store()
-    await msg.edit_text(
-        f"✅ {count} nouveaux proxies. Total: {db.get_proxy_count()}",
-        parse_mode="Markdown"
-    )
+    await msg.edit_text(f"✅ {count} nouveaux proxies. Total: {db.get_proxy_count()}", parse_mode="Markdown")
 
 
 @auth_required
 async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reconnecte tous les comptes."""
     msg = await update.message.reply_text("🔄 Reconnexion de tous les comptes...")
-
-    # Déconnecte les admins
     await session_mgr.disconnect_all()
-
-    # Recharge les admins depuis la DB
     admin_count = await session_mgr.load_all_active_accounts() or 0
-
-    # Déconnecte les comptes externes
     for phone in list(reporting_accounts.clients.keys()):
         try:
             await reporting_accounts.clients[phone][0].disconnect()
         except Exception:
             pass
     reporting_accounts.clients.clear()
-
-    # Reconnecte les comptes externes
     external_count = await reporting_accounts.connect_all() or 0
-
-    await msg.edit_text(
-        f"✅ {admin_count + external_count} comptes reconnectés "
-        f"({admin_count} admins, {external_count} externes)",
-        parse_mode="Markdown"
-    )
+    await msg.edit_text(f"✅ {admin_count + external_count} comptes reconnectés ({admin_count} admins, {external_count} externes)", parse_mode="Markdown")
 
 
-# ========== POST INIT ==========
 async def post_init(app: Application):
-    """Exécuté après l'initialisation du bot."""
     logger.info("🚀 Démarrage de REGrand...")
     os.makedirs(SESSIONS_DIR, exist_ok=True)
 
     admin_count = 0
-    if SESSION_STRING:
+
+    if SESSION_STRING and len(SESSION_STRING) > 10:
         try:
             client = create_telegram_client(SESSION_STRING)
             await client.connect()
@@ -449,37 +406,33 @@ async def post_init(app: Application):
                     authorized_users.add(me.id)
                 session_mgr.add_client_sync(f"admin_{me.id}", client, me)
                 admin_count = 1
-                logger.info(f"✅ Admin principal connecté: {me.first_name} (ID: {me.id})")
+                logger.info(f"✅ Admin principal: {me.first_name} (ID: {me.id})")
             else:
-                logger.warning("⚠️ Session string admin non valide")
+                logger.warning("⚠️ Session admin non valide")
+                admin_count = await session_mgr.load_all_active_accounts() or 0
         except Exception as e:
-            logger.error(f"❌ Erreur connexion admin principal: {e}")
-            # Fallback : tenter de charger depuis la DB
+            logger.error(f"❌ Admin principal: {e}")
             admin_count = await session_mgr.load_all_active_accounts() or 0
     else:
-        # Pas de session string, on charge depuis la DB
+        logger.info("ℹ️ Pas de SESSION_STRING, chargement depuis DB...")
         admin_count = await session_mgr.load_all_active_accounts() or 0
 
-    # Connexion des comptes externes
     external_count = await reporting_accounts.connect_all() or 0
 
-    # Scraper des proxies si la base est vide
     if db.get_proxy_count() == 0:
         try:
             await proxy_scraper.scrape_and_store()
         except Exception as e:
-            logger.warning(f"⚠️ Scraping initial échoué: {e}")
+            logger.warning(f"⚠️ Scraping: {e}")
 
     total = admin_count + external_count
-    logger.info(f"✅ REGrand prêt: {total} comptes connectés ({admin_count} admins, {external_count} externes)")
+    logger.info(f"✅ REGrand prêt: {total} comptes ({admin_count} admins, {external_count} externes)")
 
 
-# ========== MAIN ==========
 def main():
     logger.info("🔄 Initialisation du bot...")
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_account))
     app.add_handler(CommandHandler("co", verify_code))
@@ -490,7 +443,7 @@ def main():
     app.add_handler(CommandHandler("scrape", scrape_proxies))
     app.add_handler(CommandHandler("reconnect", reconnect))
 
-    logger.info("🔄 Démarrage du polling...")
+    logger.info("🔄 Polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
