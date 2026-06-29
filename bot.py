@@ -6,7 +6,7 @@ import random
 import json
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, filters
 from telethon import TelegramClient
 from telethon.errors import (
     PhoneCodeInvalidError, PhoneCodeExpiredError,
@@ -35,7 +35,7 @@ reporter = Reporter(db)
 proxy_scraper = ProxyScraper(db)
 
 authorized_users = set(AUTHORIZED_USERS)
-_pending = {}
+_pending = {}  # {chat_id: {...}}
 
 
 class ReportingAccounts:
@@ -131,9 +131,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 **REGrand - Bot de Signalement**\n\n"
         "Commandes:\n"
         "`/start` - Aide\n"
-        "`/add` - Ajouter un compte (+225XXXXXXXX)\n"
-        "`/co` - Valider le code reçu\n"
-        "`/cod2` - Valider le mot de passe 2FA\n"
+        "`/add +225XXXXXXXX` - Ajouter un compte\n"
+        "`/co CODE` - Valider le code reçu\n"
+        "`/cod2 MOTDEPASSE` - Valider le mot de passe 2FA\n"
         "`/status` - Statut des comptes\n"
         "`/702 @username` - Signaler une cible\n"
         "`/del +225XXXXXXXX` - Supprimer un compte\n"
@@ -145,6 +145,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
     if not context.args:
         await update.message.reply_text("Usage: `/add +225XXXXXXXX`", parse_mode="Markdown")
         return
@@ -153,28 +156,32 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not phone.startswith("+"):
         phone = "+" + phone
 
-    chat_id = update.effective_chat.id
-
+    # Nettoyer l'ancien pending pour ce chat
     if chat_id in _pending:
-        await update.message.reply_text("⏳ Une opération est déjà en cours.")
-        return
+        old = _pending[chat_id]
+        try:
+            await old["client"].disconnect()
+        except Exception:
+            pass
+        del _pending[chat_id]
 
     msg = await update.message.reply_text(f"📱 Envoi du code vers `{phone}`...", parse_mode="Markdown")
 
     try:
-        # CORRECTION : utiliser create_telegram_client avec une session vide
-        # On passe StringSession() sans argument = nouvelle session
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
 
         sent = await client.send_code_request(phone)
 
         _pending[chat_id] = {
+            "user_id": user_id,
             "phone": phone,
             "client": client,
             "phone_code_hash": sent.phone_code_hash,
             "msg": msg,
         }
+
+        logger.info(f"📱 Code envoyé à {phone} pour user {user_id} (chat {chat_id})")
 
         await msg.edit_text(
             f"📱 Code envoyé à `{phone}`.\n"
@@ -193,6 +200,7 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
 
     if chat_id not in _pending:
         await update.message.reply_text("❌ Aucune opération en attente. Fais `/add` d'abord.")
@@ -227,7 +235,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Utilise `/cod2 MOT_DE_PASSE`",
             parse_mode="Markdown"
         )
-        pending["awaiting_2fa"] = True
 
     except PhoneCodeInvalidError:
         await msg.edit_text("❌ Code invalide. Réessaie avec `/co CODE`", parse_mode="Markdown")
@@ -245,7 +252,7 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     if chat_id not in _pending:
-        await update.message.reply_text("❌ Aucune opération en attente.")
+        await update.message.reply_text("❌ Aucune opération en attente. Fais `/add` d'abord.")
         return
 
     if not context.args:
@@ -397,11 +404,6 @@ async def post_init(app: Application):
 
     admin_count = 0
 
-    # Vérifie que API_ID et API_HASH sont valides
-    if not API_ID or not API_HASH:
-        logger.error(f"❌ API_ID={API_ID}, API_HASH={'✓' if API_HASH else '✗'} ! Vérifie les variables Railway.")
-        return
-
     if SESSION_STRING and len(SESSION_STRING) > 10:
         try:
             client = create_telegram_client(SESSION_STRING)
@@ -437,16 +439,11 @@ async def post_init(app: Application):
 
 def main():
     logger.info("🔄 Initialisation du bot...")
-    
+
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN manquant !")
         return
-    if not API_ID or not API_HASH:
-        logger.error(f"❌ API_ID={API_ID} ou API_HASH vide ! Vérifie les variables Railway.")
-        return
-    
-    logger.info(f"✅ Configuration OK: API_ID={API_ID}, BOT_TOKEN={'✓' if BOT_TOKEN else '✗'}")
-    
+
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
