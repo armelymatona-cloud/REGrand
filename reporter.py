@@ -32,28 +32,26 @@ class Reporter:
         try:
             target = await client.get_entity(target_username)
             
-            # Block/Unblock
+            # Méthode 1: Block/Unblock
             try:
                 from telethon.tl.functions.contacts import Block, Unblock
                 await client(Block(id=target))
                 await asyncio.sleep(random.uniform(1, 2))
                 await client(Unblock(id=target))
-                logger.debug(f"✅ Block/Unblock: {me.first_name}")
                 await asyncio.sleep(random.uniform(2, 4))
                 return True
-            except Exception as e:
-                logger.debug(f"⚠️ Block échoué: {e}")
+            except:
+                pass
             
-            # Message vide
+            # Méthode 2: Message vide
             try:
                 msg = await client.send_message(target, ".")
                 await asyncio.sleep(0.5)
                 await client.delete_messages(target, [msg.id])
-                logger.debug(f"✅ Message: {me.first_name}")
                 await asyncio.sleep(random.uniform(2, 4))
                 return True
-            except Exception as e:
-                logger.debug(f"⚠️ Message échoué: {e}")
+            except:
+                pass
             
             return False
             
