@@ -23,7 +23,7 @@ class Proxy:
     port: int
     username: Optional[str]
     password: Optional[str]
-    protocol: str  # socks5, http
+    protocol: str
     is_active: bool
     last_checked: Optional[str]
 
