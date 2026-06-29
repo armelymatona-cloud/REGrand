@@ -30,6 +30,38 @@ class Database:
             CREATE TABLE IF NOT EXISTS proxies (
                 proxy TEXT PRIMARY KEY,
                 protocol TEXT DEFAULT 'http',
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS targets (
+                target TEXT PRIMARY KEY,
+                reports INTEGER DEFAULT 1,
+                last_reported TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.commit()
+        conn.close()
+        logger.info("✅ Base de données initialisée")
+
+    # ---- Accounts ----
+    def get_active_accounts(self):
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute("SELECT phone, session_string FROM accounts WHERE active = 1")
+        rows = cur.fetchall()
+        conn.close()
+        return [Account(phone=r[0], session_string=r[1]) for r in rows]
+
+    def update_account_status(self, phone: str, active: bool):
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute("UPDATE accounts SET active = ? WHERE phone = ?", (int(active), phone))
+        conn.commit()
+        conn.close()
+
+    # ---- Proxies ----
+    def get_proxy_count(self) -> int:
         conn = self._connect()
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM proxies")
@@ -71,10 +103,8 @@ class Database:
         conn = self._connect()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO targets (target) VALUES (?)
-        created_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
+            INSERT OR IGNORE INTO targets (target) VALUES (?)
+        """, (target,))
         conn.commit()
         conn.close()
 
@@ -82,8 +112,14 @@ class Database:
         conn = self._connect()
         cur = conn.cursor()
         cur.execute(
-            "UPDATE targets SET reports = reports + 1 WHERE target = ?",
+            "UPDATE targets SET reports = reports + 1, last_reported = datetime('now') WHERE target = ?",
             (target,)
         )
         conn.commit()
         conn.close()
+
+
+class Account:
+    def __init__(self, phone: str, session_string: str):
+        self.phone = phone
+        self.session_string = session_string
