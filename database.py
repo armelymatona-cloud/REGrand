@@ -6,6 +6,12 @@ from config import DATABASE_PATH
 logger = logging.getLogger(__name__)
 
 
+class Account:
+    def __init__(self, phone: str, session_string: str):
+        self.phone = phone
+        self.session_string = session_string
+
+
 class Database:
     def __init__(self, db_path: str = DATABASE_PATH):
         self.db_path = db_path
@@ -44,7 +50,6 @@ class Database:
         conn.close()
         logger.info("✅ Base de données initialisée")
 
-    # ---- Accounts ----
     def get_active_accounts(self):
         conn = self._connect()
         cur = conn.cursor()
@@ -60,7 +65,6 @@ class Database:
         conn.commit()
         conn.close()
 
-    # ---- Proxies ----
     def get_proxy_count(self) -> int:
         conn = self._connect()
         cur = conn.cursor()
@@ -75,10 +79,7 @@ class Database:
         new_count = 0
         for proxy in proxies:
             try:
-                cur.execute(
-                    "INSERT OR IGNORE INTO proxies (proxy) VALUES (?)",
-                    (proxy,)
-                )
+                cur.execute("INSERT OR IGNORE INTO proxies (proxy) VALUES (?)", (proxy,))
                 if cur.rowcount > 0:
                     new_count += 1
             except Exception:
@@ -90,36 +91,21 @@ class Database:
     def get_random_proxies(self, limit: int = 5) -> list:
         conn = self._connect()
         cur = conn.cursor()
-        cur.execute(
-            "SELECT proxy FROM proxies ORDER BY RANDOM() LIMIT ?",
-            (limit,)
-        )
+        cur.execute("SELECT proxy FROM proxies ORDER BY RANDOM() LIMIT ?", (limit,))
         rows = cur.fetchall()
         conn.close()
         return [row[0] for row in rows]
 
-    # ---- Targets ----
     def add_target(self, target: str):
         conn = self._connect()
         cur = conn.cursor()
-        cur.execute("""
-            INSERT OR IGNORE INTO targets (target) VALUES (?)
-        """, (target,))
+        cur.execute("INSERT OR IGNORE INTO targets (target) VALUES (?)", (target,))
         conn.commit()
         conn.close()
 
     def increment_target_reports(self, target: str):
         conn = self._connect()
         cur = conn.cursor()
-        cur.execute(
-            "UPDATE targets SET reports = reports + 1, last_reported = datetime('now') WHERE target = ?",
-            (target,)
-        )
+        cur.execute("UPDATE targets SET reports = reports + 1, last_reported = datetime('now') WHERE target = ?", (target,))
         conn.commit()
         conn.close()
-
-
-class Account:
-    def __init__(self, phone: str, session_string: str):
-        self.phone = phone
-        self.session_string = session_string
