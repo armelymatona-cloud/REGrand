@@ -162,8 +162,8 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"📱 Envoi du code vers `{phone}`...", parse_mode="Markdown")
 
     try:
-        # CORRECTION ICI : Utiliser StringSession() SANS argument = nouvelle session vide
-        # Ne JAMAIS mettre de chaîne aléatoire dans StringSession()
+        # CORRECTION : utiliser create_telegram_client avec une session vide
+        # On passe StringSession() sans argument = nouvelle session
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
 
@@ -397,6 +397,11 @@ async def post_init(app: Application):
 
     admin_count = 0
 
+    # Vérifie que API_ID et API_HASH sont valides
+    if not API_ID or not API_HASH:
+        logger.error(f"❌ API_ID={API_ID}, API_HASH={'✓' if API_HASH else '✗'} ! Vérifie les variables Railway.")
+        return
+
     if SESSION_STRING and len(SESSION_STRING) > 10:
         try:
             client = create_telegram_client(SESSION_STRING)
@@ -432,9 +437,16 @@ async def post_init(app: Application):
 
 def main():
     logger.info("🔄 Initialisation du bot...")
+    
     if not BOT_TOKEN:
-        logger.error("❌ BOT_TOKEN manquant ! Mets-le dans les variables Railway.")
+        logger.error("❌ BOT_TOKEN manquant !")
         return
+    if not API_ID or not API_HASH:
+        logger.error(f"❌ API_ID={API_ID} ou API_HASH vide ! Vérifie les variables Railway.")
+        return
+    
+    logger.info(f"✅ Configuration OK: API_ID={API_ID}, BOT_TOKEN={'✓' if BOT_TOKEN else '✗'}")
+    
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
