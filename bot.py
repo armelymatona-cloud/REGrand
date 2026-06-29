@@ -162,8 +162,9 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"📱 Envoi du code vers `{phone}`...", parse_mode="Markdown")
 
     try:
-        random_bytes = os.urandom(64).hex()
-        client = create_telegram_client(StringSession(random_bytes))
+        # CORRECTION ICI : Utiliser StringSession() SANS argument = nouvelle session vide
+        # Ne JAMAIS mettre de chaîne aléatoire dans StringSession()
+        client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
 
         sent = await client.send_code_request(phone)
@@ -431,6 +432,9 @@ async def post_init(app: Application):
 
 def main():
     logger.info("🔄 Initialisation du bot...")
+    if not BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN manquant ! Mets-le dans les variables Railway.")
+        return
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
