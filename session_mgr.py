@@ -1,7 +1,5 @@
 import logging
-import os
 from telethon import TelegramClient
-from config import SESSIONS_DIR
 from utils import create_telegram_client
 
 logger = logging.getLogger(__name__)
