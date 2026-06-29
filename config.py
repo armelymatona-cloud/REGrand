@@ -12,15 +12,15 @@ AUTHORIZED_USERS_STR = os.environ.get("AUTHORIZED_USERS", "")
 if AUTHORIZED_USERS_STR:
     # Depuis la variable d'environnement
     AUTHORIZED_USERS = [int(x.strip()) for x in AUTHORIZED_USERS_STR.split(",") if x.strip()]
-else:
-    # En dur dans le code
-    AUTHORIZED_USERS = [
-        123456789,  # Remplace par TON ID Telegram
-    ]
 
 # ========== CONFIGURATION TELEGRAM API ==========
-API_ID = int(os.environ.get("API_ID", "0"))
-API_HASH = os.environ.get("API_HASH", "")
+
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+
+if not API_ID or not API_HASH:
+    print("❌ ERREUR FATALE : API_ID ou API_HASH manquant...")
+    exit(1)
 
 # Session string (pour le compte admin principal)
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
@@ -28,10 +28,6 @@ SESSION_STRING = os.environ.get("SESSION_STRING", "")
 # ========== VÉRIFICATIONS ==========
 if not BOT_TOKEN:
     print("❌ ERREUR FATALE : BOT_TOKEN manquant dans les variables d'environnement")
-    sys.exit(1)
-
-if API_ID == 0 or not API_HASH:
-    print("❌ ERREUR FATALE : API_ID ou API_HASH manquant dans les variables d'environnement")
     sys.exit(1)
 
 if not AUTHORIZED_USERS:
