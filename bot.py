@@ -142,7 +142,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 @auth_required
 async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ajoute un nouveau compte Telegram par numéro de téléphone."""
@@ -165,18 +164,24 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.connect()
 
         sent = await client.send_code_request(phone)
-        phone_code_hash = sent.phone_code_hash
 
         _pending[chat_id] = {
             "phone": phone,
             "client": client,
-            "phone_code_hash": phone_code_hash
+            "phone_code_hash": sent.phone_code_hash,
+            "step": "code"  # code ou 2fa
         }
 
         await update.message.reply_text(
             f"📱 Code envoyé à `{phone}`.\n"
+            f"⏳ Tu as environ 30 secondes.\n"
             f"Utilise `/co CODE` pour vérifier.\n"
             f"Si 2FA, utilise ensuite `/cod2 MOT_DE_PASSE`.",
+            parse_mode="Markdown"
+        )
+    except FloodWaitError as e:
+        await update.message.reply_text(
+            f"⏳ Flood wait: attends {e.seconds} secondes avant de réessayer.",
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -205,8 +210,16 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client = pending["client"]
     phone_code_hash = pending["phone_code_hash"]
 
+    # Vérifier que le client est toujours connecté, sinon le reconnecter
+    try:
+        if not client.is_connected():
+            await client.connect()
+    except Exception:
+        pass
+
     try:
         await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+
         me = await client.get_me()
         session_str = client.session.save()
 
@@ -225,24 +238,63 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(
             f"✅ **Compte ajouté avec succès !**\n"
-            f"👤 {me.first_name} (ID: `{me.id}`)\n"
-            f"📱 {phone}",
+            f"👤 `{me.first_name or '?'}` (ID: `{me.id}`)\n"
+            f"📱 `{phone}`",
             parse_mode="Markdown"
         )
+
     except SessionPasswordNeededError:
         pending["step"] = "2fa"
         await update.message.reply_text(
             "🔐 2FA requis ! Utilise `/cod2 MOT_DE_PASSE`.",
             parse_mode="Markdown"
         )
+
     except PhoneCodeInvalidError:
-        await update.message.reply_text("❌ Code invalide. Réessaie avec `/co CODE`.", parse_mode="Markdown")
+        await update.message.reply_text(
+            "❌ Code invalide. Vérifie le code et réessaie avec `/co CODE`.",
+            parse_mode="Markdown"
+        )
+
     except PhoneCodeExpiredError:
-        await update.message.reply_text("❌ Code expiré. Refais `/add +225XXXXXXXX`.", parse_mode="Markdown")
-        del _pending[chat_id]
+        # Le code a expiré : on nettoie la session et on redemande
+        await update.message.reply_text(
+            "❌ Code expiré. Un nouveau code va être envoyé...",
+            parse_mode="Markdown"
+        )
+        try:
+            # Fermer l'ancien client et en créer un nouveau
+            await client.disconnect()
+            new_client = create_telegram_client()
+            await new_client.connect()
+            sent = await new_client.send_code_request(phone)
+
+            _pending[chat_id] = {
+                "phone": phone,
+                "client": new_client,
+                "phone_code_hash": sent.phone_code_hash,
+                "step": "code"
+            }
+
+            await update.message.reply_text(
+                f"📱 Nouveau code envoyé à `{phone}`.\n"
+                f"Utilise `/co NOUVEAU_CODE` maintenant !",
+                parse_mode="Markdown"
+            )
+        except Exception as e2:
+            await update.message.reply_text(
+                f"❌ Erreur lors du renvoi : {str(e2)[:200]}",
+                parse_mode="Markdown"
+            )
+
+    except FloodWaitError as e:
+        await update.message.reply_text(
+            f"⏳ Flood wait: attends {e.seconds} secondes avant de réessayer.",
+            parse_mode="Markdown"
+        )
+
     except Exception as e:
         await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}", parse_mode="Markdown")
-
 
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
