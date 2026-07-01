@@ -198,36 +198,48 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @auth_required
-async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Commande pour vérifier et connecter un compte externe.
+
+    :param update: L'update reçu par le bot.
+    :param context: Le contexte de la commande.
+    """
     chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-
-    if chat_id not in _pending:
-        await update.message.reply_text("❌ Aucune opération en attente. Fais `/add` d'abord.")
-        return
-
     if not context.args:
         await update.message.reply_text("Usage: `/co CODE`", parse_mode="Markdown")
         return
 
+    # Récupération de l'état en attente
+    pending_state: Optional[Tuple[str, str, int]] = get_pending_state(chat_id)
+    if not pending_state:
+        await update.message.reply_text("❌ Aucune opération en attente. Fais `/add` d'abord.")
+        return
+
+    phone, phone_code_hash, msg_id = pending_state
     code = context.args[0].strip()
-    pending = _pending[chat_id]
-    phone = pending["phone"]
-    client = pending["client"]
-    phone_code_hash = pending["phone_code_hash"]
-    msg = pending["msg"]
+
+    # Vérification que le message est valide
+    msg: Message = await context.bot.get_chat(chat_id).get_message(msg_id)
+    if not msg or not isinstance(msg, Message):
+        await update.message.reply_text("❌ Le message original est introuvable. Réessaie avec `/add`", parse_mode="Markdown")
+        return
 
     try:
+        # Connexion du client
         await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
 
+        # Mise à jour du compte
         me = await client.get_me()
         session_str = StringSession.save(client.session)
-
         reporting_accounts.add(phone, session_str)
         reporting_accounts.clients[phone] = (client, me)
 
+        # Mise à jour du message
         await msg.edit_text(f"✅ Connecté ! `{phone}` ajouté comme compte externe.", parse_mode="Markdown")
-        _pending.pop(chat_id, None)
+
+        # Nettoyage de l'état
+        clear_pending_state(chat_id)
 
     except SessionPasswordNeededError:
         await msg.edit_text(
@@ -235,17 +247,17 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Utilise `/cod2 MOT_DE_PASSE`",
             parse_mode="Markdown"
         )
-
     except PhoneCodeInvalidError:
         await msg.edit_text("❌ Code invalide. Réessaie avec `/co CODE`", parse_mode="Markdown")
     except PhoneCodeExpiredError:
         await msg.edit_text("❌ Code expiré. Refais `/add`", parse_mode="Markdown")
-        _pending.pop(chat_id, None)
+        clear_pending_state(chat_id)
     except FloodWaitError as e:
         await msg.edit_text(f"❌ Flood: {e.seconds}s")
     except Exception as e:
-        await msg.edit_text(f"❌ Erreur: {str(e)[:200]}")
-
+        logger.error(f"Erreur inattendue : {str(e)}")
+        await update.message.reply_text("❌ Une erreur inattendue s'est produite. Essaye à nouveau.", parse_mode="Markdown")
+        clear_pending_state(chat_id)
 
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
