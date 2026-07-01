@@ -482,7 +482,7 @@ def main():
     app.add_handler(CommandHandler("reconnect", reconnect))
 
     logger.info("🔄 Polling...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
