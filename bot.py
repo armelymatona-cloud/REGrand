@@ -17,11 +17,6 @@ from telethon.errors import (
 from telethon.sessions import StringSession
 import httpx
 
-client = TelegramClient(
-    StringSession(SESSION_STRING),
-    API_ID,
-    API_HASH
-)
 from config import (
     BOT_TOKEN, AUTHORIZED_USERS, API_ID, API_HASH,
     SESSION_STRING, SESSIONS_DIR, ACCOUNTS_FILE
