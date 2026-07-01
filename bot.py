@@ -15,6 +15,7 @@ from telethon.errors import (
     SessionPasswordNeededError
 )
 from telethon.sessions import StringSession
+import httpx
 
 from config import (
     BOT_TOKEN, AUTHORIZED_USERS, API_ID, API_HASH,
@@ -43,7 +44,6 @@ _pending = {}  # {chat_id: {...}}
 
 
 def auth_required(func):
-    """Décorateur pour restreindre l'accès aux utilisateurs autorisés."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if user_id not in authorized_users:
@@ -57,8 +57,8 @@ class ReportingAccounts:
     FILE_PATH = ACCOUNTS_FILE
 
     def __init__(self):
-        self.accounts = {}       # {phone: session_string}
-        self.clients = {}        # {phone: (client, me)}
+        self.accounts = {}
+        self.clients = {}
         self._load()
 
     def _load(self):
@@ -99,7 +99,6 @@ class ReportingAccounts:
         logger.info(f"🗑️ Compte externe retiré: {phone}")
 
     async def connect_all(self) -> int:
-        """Connecte tous les comptes externes enregistrés."""
         count = 0
         for phone, session_str in self.accounts.items():
             if session_str and len(session_str) > 10:
@@ -119,11 +118,24 @@ class ReportingAccounts:
         return count
 
     def get_active_clients(self) -> list:
-        """Retourne la liste des clients externes actifs."""
         return [(c, m) for c, m in self.clients.values()]
 
 
 reporting_accounts = ReportingAccounts()
+
+
+async def force_delete_webhook():
+    """Force la suppression de tout webhook avant le polling."""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url)
+            if r.status_code == 200:
+                logger.info("✅ Webhook supprimé (force)")
+            else:
+                logger.warning(f"⚠️ Réponse deleteWebhook: {r.text}")
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible de supprimer le webhook: {e}")
 
 
 @auth_required
@@ -145,7 +157,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ajoute un nouveau compte Telegram par numéro de téléphone."""
     if not context.args:
         await update.message.reply_text("Usage: `/add +225XXXXXXXX`", parse_mode="Markdown")
         return
@@ -163,7 +174,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         client = create_telegram_client()
         await client.connect()
-
         sent = await client.send_code_request(phone)
 
         _pending[chat_id] = {
@@ -176,13 +186,13 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"📱 **Code SMS envoyé** à `{phone}`.\n"
             f"📩 Vérifie tes SMS.\n"
-            f"📝 Utilise `/co CODE` dès que tu reçois le code.\n"
-            f"🔐 Si 2FA, utilise ensuite `/cod2 MOT_DE_PASSE`.",
+            f"📝 Utilise `/co CODE` dès réception.\n"
+            f"🔐 Si 2FA, utilise `/cod2 MOT_DE_PASSE` ensuite.",
             parse_mode="Markdown"
         )
     except FloodWaitError as e:
         await update.message.reply_text(
-            f"⏳ Flood wait: attends {e.seconds} secondes avant de réessayer.",
+            f"⏳ Flood wait: attends {e.seconds}s avant de réessayer.",
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -191,7 +201,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Vérifie le code reçu par SMS."""
     if not context.args:
         await update.message.reply_text("Usage: `/co CODE`", parse_mode="Markdown")
         return
@@ -201,7 +210,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if chat_id not in _pending:
         await update.message.reply_text(
-            "❌ Aucune session en attente. Fais d'abord `/add +225XXXXXXXX`.",
+            "❌ Aucune session. Fais `/add +225XXXXXXXX` d'abord.",
             parse_mode="Markdown"
         )
         return
@@ -211,7 +220,6 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client = pending["client"]
     phone_code_hash = pending["phone_code_hash"]
 
-    # Vérifier que le client est toujours connecté
     try:
         if not client.is_connected():
             await client.connect()
@@ -232,7 +240,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             authorized_users.add(me.id)
 
         await update.message.reply_text(
-            f"✅ **Compte ajouté avec succès !**\n"
+            f"✅ **Compte ajouté !**\n"
             f"👤 `{me.first_name or '?'}` (ID: `{me.id}`)\n"
             f"📱 `{phone}`",
             parse_mode="Markdown"
@@ -247,15 +255,12 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except PhoneCodeInvalidError:
         await update.message.reply_text(
-            "❌ Code invalide. Vérifie le code dans tes SMS et réessaie avec `/co CODE`.",
+            "❌ Code invalide. Vérifie dans tes SMS et réessaie avec `/co CODE`.",
             parse_mode="Markdown"
         )
 
     except PhoneCodeExpiredError:
-        msg = await update.message.reply_text(
-            "❌ Code expiré. Nouvel envoi de SMS...",
-            parse_mode="Markdown"
-        )
+        msg = await update.message.reply_text("❌ Code expiré. Nouvel envoi...", parse_mode="Markdown")
         try:
             await client.disconnect()
         except Exception:
@@ -275,35 +280,30 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await msg.edit_text(
                 f"📱 **Nouveau SMS** envoyé à `{phone}`.\n"
-                f"📩 Vérifie tes SMS et envoie `/co CODE` immédiatement !",
+                f"Envoie `/co CODE` dès réception !",
                 parse_mode="Markdown"
             )
         except FloodWaitError as e:
             await msg.edit_text(
-                f"⏳ Trop de tentatives. Attends {e.seconds}s puis refais `/add +225XXXXXXXX`.",
+                f"⏳ Trop de tentatives. Attends {e.seconds}s puis refais `/add`.",
                 parse_mode="Markdown"
             )
             del _pending[chat_id]
         except Exception as e2:
             await msg.edit_text(
-                f"❌ Erreur renvoi: {str(e2)[:200]}\nRefais `/add +225XXXXXXXX` manuellement.",
+                f"❌ Erreur renvoi: {str(e2)[:200]}\nRefais `/add` manuellement.",
                 parse_mode="Markdown"
             )
             del _pending[chat_id]
 
     except FloodWaitError as e:
-        await update.message.reply_text(
-            f"⏳ Flood wait: {e.seconds}s. Attends puis réessaie.",
-            parse_mode="Markdown"
-        )
-
+        await update.message.reply_text(f"⏳ Flood wait: {e.seconds}s", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}", parse_mode="Markdown")
 
 
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Vérifie le mot de passe 2FA."""
     if not context.args:
         await update.message.reply_text("Usage: `/cod2 MOT_DE_PASSE`", parse_mode="Markdown")
         return
@@ -313,7 +313,7 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if chat_id not in _pending:
         await update.message.reply_text(
-            "❌ Aucune session en attente. Fais d'abord `/add +225XXXXXXXX`.",
+            "❌ Aucune session. Fais `/add` d'abord.",
             parse_mode="Markdown"
         )
         return
@@ -335,7 +335,7 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             authorized_users.add(me.id)
 
         await update.message.reply_text(
-            f"✅ **Compte ajouté avec succès (2FA) !**\n"
+            f"✅ **Compte ajouté (2FA) !**\n"
             f"👤 `{me.first_name or '?'}` (ID: `{me.id}`)\n"
             f"📱 `{phone}`",
             parse_mode="Markdown"
@@ -348,7 +348,6 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth_required
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Affiche le statut de tous les comptes."""
     admin_clients = await session_mgr.get_active_clients()
     reporting_clients = reporting_accounts.get_active_clients()
 
@@ -367,7 +366,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = me.id if me else "?"
         msg += f"✅ `{uid}` {name} {uname}\n"
 
-    msg += f"\n🔌 Proxies en base: {db.get_proxy_count()}"
+    msg += f"\n🔌 Proxies: {db.get_proxy_count()}"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
@@ -401,7 +400,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 admin_usernames.add(f"@{me.username.lower()}")
 
     if target_clean in admin_usernames or target_clean.replace("@", "") in admin_usernames:
-        await update.message.reply_text(f"❌ `{target}` est un admin. Bloqué.", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ `{target}` est un admin.", parse_mode="Markdown")
         return
 
     all_clients = []
@@ -434,11 +433,9 @@ async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: `/del +225XXXXXXXX`", parse_mode="Markdown")
         return
-
     phone = context.args[0].strip()
     if not phone.startswith("+"):
         phone = "+" + phone
-
     reporting_accounts.remove(phone)
     db.remove_account(phone)
     await update.message.reply_text(f"🗑️ `{phone}` retiré.", parse_mode="Markdown")
@@ -448,19 +445,14 @@ async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scrape_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🕷️ Scraping des proxies...")
     count = await proxy_scraper.scrape_and_store()
-    await msg.edit_text(
-        f"✅ {count} nouveaux proxies. Total: {db.get_proxy_count()}",
-        parse_mode="Markdown"
-    )
+    await msg.edit_text(f"✅ {count} nouveaux. Total: {db.get_proxy_count()}", parse_mode="Markdown")
 
 
 @auth_required
 async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("🔄 Reconnexion de tous les comptes...")
-
+    msg = await update.message.reply_text("🔄 Reconnexion...")
     await session_mgr.disconnect_all()
     admin_count = await session_mgr.load_all_active_accounts() or 0
-
     for phone in list(reporting_accounts.clients.keys()):
         try:
             client, _ = reporting_accounts.clients[phone]
@@ -468,17 +460,15 @@ async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
     reporting_accounts.clients.clear()
-
     external_count = await reporting_accounts.connect_all() or 0
-
     total = admin_count + external_count
-    await msg.edit_text(
-        f"✅ {total} comptes reconnectés ({admin_count} admins, {external_count} externes)",
-        parse_mode="Markdown"
-    )
+    await msg.edit_text(f"✅ {total} reconnectés ({admin_count} admins, {external_count} externes)", parse_mode="Markdown")
 
 
 async def post_init(app):
+    # ÉTAPE 1: Forcer la suppression du webhook AVANT tout
+    await force_delete_webhook()
+
     logger.info("🚀 Démarrage de REGrand...")
     os.makedirs(SESSIONS_DIR, exist_ok=True)
 
