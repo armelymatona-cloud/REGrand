@@ -19,8 +19,8 @@ import httpx
 
 client = TelegramClient(
     StringSession(SESSION_STRING),
-    api_id,
-    api_hash
+    API_ID,
+    API_HASH
 )
 from config import (
     BOT_TOKEN, AUTHORIZED_USERS, API_ID, API_HASH,
