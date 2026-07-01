@@ -42,13 +42,11 @@ _pending = {}  # {chat_id: {...}}
 
 
 class ReportingAccounts:
-    """Gère les comptes externes (non-admins) stockés dans un fichier JSON."""
-
     FILE_PATH = ACCOUNTS_FILE
 
     def __init__(self):
-        self.accounts = {}   # {phone: session_string}
-        self.clients = {}     # {phone: (client, me)}
+        self.accounts = {}
+        self.clients = {}
         self._load()
 
     def _load(self):
@@ -70,28 +68,32 @@ class ReportingAccounts:
         except Exception as e:
             logger.error(f"❌ Erreur sauvegarde: {e}")
 
-    def add(self, phone: str, session_string: str):
+    def add(self, phone, session_string):
         self.accounts[phone] = session_string
         self._save()
         logger.info(f"➕ Compte externe ajouté: {phone}")
 
-    def remove(self, phone: str):
+    def remove(self, phone):
         if phone in self.accounts:
             del self.accounts[phone]
             self._save()
         if phone in self.clients:
             try:
                 client, _ = self.clients[phone]
-                asyncio.get_event_loop().run_until_complete(client.disconnect())
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(client.disconnect())
+                else:
+                    loop.run_until_complete(client.disconnect())
             except Exception:
                 pass
             del self.clients[phone]
         logger.info(f"🗑️ Compte externe retiré: {phone}")
 
-    def get_active_clients(self) -> list:
+    def get_active_clients(self):
         return [(c, m) for c, m in self.clients.values()]
 
-    async def connect_all(self) -> int:
+    async def connect_all(self):
         connected = 0
         for phone, session_str in self.accounts.items():
             if not session_str or len(session_str) < 10:
@@ -115,10 +117,8 @@ class ReportingAccounts:
 reporting_accounts = ReportingAccounts()
 
 
-# ─── Décorateur ──────────────────────────────────────────────
-
 def auth_required(func):
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def wrapper(update, context):
         if update.effective_user.id not in authorized_users:
             await update.message.reply_text("⛔ Non autorisé.")
             return
@@ -126,10 +126,8 @@ def auth_required(func):
     return wrapper
 
 
-# ─── Handlers ────────────────────────────────────────────────
-
 @auth_required
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     text = (
         "🤖 **REGrand Bot v2.0**\n\n"
         "**Commandes :**\n"
@@ -147,8 +145,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @auth_required
-async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ajoute un compte externe via numéro de téléphone."""
+async def add_account(update, context):
     if not context.args:
         await update.message.reply_text("Usage: `/add +225XXXXXXXX`", parse_mode="Markdown")
         return
@@ -159,7 +156,7 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_user.id
 
-    # Nettoyer toute session en cours pour ce chat
+    # Nettoyer l'ancienne session en cours s'il y en a une
     if chat_id in _pending:
         old = _pending[chat_id]
         try:
@@ -169,14 +166,13 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del _pending[chat_id]
 
     try:
-        # Créer un client avec une session VIERGE pour le login
+        # IMPORTANT: créer un client avec une session vierge pour nouveau login
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
 
-        # Envoyer le code
+        # Envoyer le code de vérification
         sent = await client.send_code_request(phone)
 
-        # Stocker l'état
         _pending[chat_id] = {
             "client": client,
             "phone": phone,
@@ -190,17 +186,17 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Exemple: `/co 12345`",
             parse_mode="Markdown"
         )
-        logger.info(f"📱 Code envoyé à {phone}")
+        logger.info(f"📱 Code envoyé à {phone} - chat_id={chat_id}")
 
     except Exception as e:
         logger.error(f"❌ Erreur envoi code: {e}")
         await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}")
-        _pending.pop(chat_id, None)
+        if chat_id in _pending:
+            del _pending[chat_id]
 
 
 @auth_required
-async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Vérifie le code reçu par SMS/Telegram."""
+async def verify_code(update, context):
     chat_id = update.effective_user.id
 
     if chat_id not in _pending:
@@ -208,6 +204,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️ Aucune authentification en cours. Utilisez `/add +225XXXXXXXX` d'abord.",
             parse_mode="Markdown"
         )
+        logger.warning(f"verify_code appelé mais chat_id={chat_id} pas dans _pending")
         return
 
     if not context.args:
@@ -219,13 +216,14 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client = pending["client"]
     phone = pending["phone"]
 
-    # Vérifier que le client est toujours connecté
+    # Vérifier et rétablir la connexion si perdue
     if not client.is_connected():
         try:
             await client.connect()
         except Exception as e:
             await update.message.reply_text(
-                "❌ Connexion perdue. Recommencez avec `/add +225XXXXXXXX`."
+                "❌ Connexion perdue. Recommencez avec `/add +225XXXXXXXX`.",
+                parse_mode="Markdown"
             )
             _pending.pop(chat_id, None)
             return
@@ -264,11 +262,13 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except PhoneCodeInvalidError:
-        await update.message.reply_text("❌ Code invalide. Réessayez avec `/co CODE`.")
+        await update.message.reply_text("❌ Code invalide. Réessayez avec `/co CODE`.",
+                                        parse_mode="Markdown")
 
     except PhoneCodeExpiredError:
         await update.message.reply_text(
-            "❌ Code expiré. Recommencez avec `/add +225XXXXXXXX`."
+            "❌ Code expiré. Recommencez avec `/add +225XXXXXXXX`.",
+            parse_mode="Markdown"
         )
         _pending.pop(chat_id, None)
         try:
@@ -276,14 +276,19 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+    except FloodWaitError as e:
+        await update.message.reply_text(
+            f"⏳ Trop de tentatives. Attendez {e.seconds} secondes.",
+            parse_mode="Markdown"
+        )
+
     except Exception as e:
         logger.error(f"❌ Erreur vérification code: {e}")
-        await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}")
+        await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}", parse_mode="Markdown")
 
 
 @auth_required
-async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Vérifie le mot de passe 2FA."""
+async def verify_2fa(update, context):
     chat_id = update.effective_user.id
 
     if chat_id not in _pending:
@@ -309,13 +314,13 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client = pending["client"]
     phone = pending["phone"]
 
-    # Vérifier que le client est toujours connecté
     if not client.is_connected():
         try:
             await client.connect()
         except Exception as e:
             await update.message.reply_text(
-                "❌ Connexion perdue. Recommencez avec `/add +225XXXXXXXX`."
+                "❌ Connexion perdue. Recommencez avec `/add +225XXXXXXXX`.",
+                parse_mode="Markdown"
             )
             _pending.pop(chat_id, None)
             return
@@ -341,15 +346,21 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"✅ Compte {phone} authentifié (2FA) et sauvegardé")
 
     except PasswordHashInvalidError:
-        await update.message.reply_text("❌ Mot de passe 2FA incorrect. Réessayez avec `/cod2 MOTDEPASSE`.")
+        await update.message.reply_text("❌ Mot de passe 2FA incorrect. Réessayez avec `/cod2 MOTDEPASSE`.", parse_mode="Markdown")
+
+    except FloodWaitError as e:
+        await update.message.reply_text(
+            f"⏳ Trop de tentatives. Attendez {e.seconds} secondes.",
+            parse_mode="Markdown"
+        )
 
     except Exception as e:
         logger.error(f"❌ Erreur 2FA: {e}")
-        await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}")
+        await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}", parse_mode="Markdown")
 
 
 @auth_required
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def status(update, context):
     admin_clients = await session_mgr.get_active_clients()
     reporting_clients = reporting_accounts.get_active_clients()
 
@@ -373,7 +384,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @auth_required
-async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def report(update, context):
     if not context.args:
         await update.message.reply_text("Usage: `/702 @username`", parse_mode="Markdown")
         return
@@ -431,7 +442,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @auth_required
-async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def remove_account(update, context):
     if not context.args:
         await update.message.reply_text("Usage: `/del +225XXXXXXXX`", parse_mode="Markdown")
         return
@@ -447,7 +458,7 @@ async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @auth_required
-async def scrape_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def scrape_proxies(update, context):
     msg = await update.message.reply_text("🕷️ Scraping des proxies...")
     count = await proxy_scraper.scrape_and_store()
     await msg.edit_text(
@@ -457,7 +468,7 @@ async def scrape_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @auth_required
-async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def reconnect(update, context):
     msg = await update.message.reply_text("🔄 Reconnexion de tous les comptes...")
 
     await session_mgr.disconnect_all()
@@ -480,9 +491,7 @@ async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ─── Post-init ───────────────────────────────────────────────
-
-async def post_init(app: Application):
+async def post_init(app):
     logger.info("🚀 Démarrage de REGrand...")
     os.makedirs(SESSIONS_DIR, exist_ok=True)
 
@@ -520,8 +529,6 @@ async def post_init(app: Application):
     total = admin_count + external_count
     logger.info(f"✅ REGrand prêt: {total} comptes ({admin_count} admins, {external_count} externes)")
 
-
-# ─── Main ────────────────────────────────────────────────────
 
 def main():
     logger.info("🔄 Initialisation du bot...")
