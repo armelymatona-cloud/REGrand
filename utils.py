@@ -16,17 +16,23 @@ REAL_SYSTEM_VERSIONS = ["Android 14", "Android 13", "iOS 18.0", "iOS 17.5", "And
 REAL_APP_VERSIONS = ["10.14.5", "10.14.4", "10.13.3", "10.12.8", "11.0.0"]
 
 
-def create_telegram_client(session_str: str, proxy=None) -> TelegramClient:
-    if not session_str or len(session_str) < 10:
-        raise ValueError("Session string invalide")
-
+def create_telegram_client(session_str: str = "", proxy=None) -> TelegramClient:
+    """
+    Crée un client Telegram avec des paramètres réalistes.
+    Si session_str est vide, crée un client sans session (pour login).
+    """
     device = random.choice(REAL_DEVICES)
     lang = random.choice(REAL_LANG_CODES)
     system = random.choice(REAL_SYSTEM_VERSIONS)
     app_ver = random.choice(REAL_APP_VERSIONS)
 
+    if session_str and len(session_str) > 10:
+        session = StringSession(session_str)
+    else:
+        session = StringSession()  # Session vide pour nouveau login
+
     client = TelegramClient(
-        StringSession(session_str),
+        session,
         API_ID,
         API_HASH,
         device_model=device,
