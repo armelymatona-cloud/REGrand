@@ -142,6 +142,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+
 @auth_required
 async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ajoute un nouveau compte Telegram par numéro de téléphone."""
@@ -169,14 +170,14 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "phone": phone,
             "client": client,
             "phone_code_hash": sent.phone_code_hash,
-            "step": "code"  # code ou 2fa
+            "step": "code"
         }
 
         await update.message.reply_text(
-            f"📱 Code envoyé à `{phone}`.\n"
-            f"⏳ Tu as environ 30 secondes.\n"
-            f"Utilise `/co CODE` pour vérifier.\n"
-            f"Si 2FA, utilise ensuite `/cod2 MOT_DE_PASSE`.",
+            f"📱 **Code SMS envoyé** à `{phone}`.\n"
+            f"📩 Vérifie tes SMS.\n"
+            f"📝 Utilise `/co CODE` dès que tu reçois le code.\n"
+            f"🔐 Si 2FA, utilise ensuite `/cod2 MOT_DE_PASSE`.",
             parse_mode="Markdown"
         )
     except FloodWaitError as e:
@@ -186,10 +187,11 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}", parse_mode="Markdown")
-        
+
+
 @auth_required
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Vérifie le code reçu par SMS/Telegram."""
+    """Vérifie le code reçu par SMS."""
     if not context.args:
         await update.message.reply_text("Usage: `/co CODE`", parse_mode="Markdown")
         return
@@ -212,10 +214,9 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Vérifier que le client est toujours connecté
     try:
         if not client.is_connected():
-            await update.message.reply_text("🔄 Reconnexion au serveur Telegram...")
             await client.connect()
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Erreur de connexion: {e}")
+    except Exception:
+        pass
 
     try:
         await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
@@ -246,27 +247,23 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except PhoneCodeInvalidError:
         await update.message.reply_text(
-            "❌ Code invalide. Vérifie le code et réessaie avec `/co CODE`.",
+            "❌ Code invalide. Vérifie le code dans tes SMS et réessaie avec `/co CODE`.",
             parse_mode="Markdown"
         )
 
     except PhoneCodeExpiredError:
         msg = await update.message.reply_text(
-            "❌ Code expiré. Tentative de renvoi d'un nouveau code...",
+            "❌ Code expiré. Nouvel envoi de SMS...",
             parse_mode="Markdown"
         )
         try:
-            # Déconnexion et reconnexion propre
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
+            await client.disconnect()
+        except Exception:
+            pass
 
-            # Créer un NOUVEAU client propre
+        try:
             new_client = create_telegram_client()
             await new_client.connect()
-
-            # Envoyer une nouvelle demande de code
             sent = await new_client.send_code_request(phone)
 
             _pending[chat_id] = {
@@ -277,22 +274,19 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
 
             await msg.edit_text(
-                f"📱 **NOUVEAU CODE** envoyé à `{phone}`.\n"
-                f"📩 Regarde tes SMS/appels Telegram.\n"
-                f"⏳ Envoie `/co CODE` **immédiatement** après réception !",
+                f"📱 **Nouveau SMS** envoyé à `{phone}`.\n"
+                f"📩 Vérifie tes SMS et envoie `/co CODE` immédiatement !",
                 parse_mode="Markdown"
             )
         except FloodWaitError as e:
             await msg.edit_text(
-                f"⏳ Trop de tentatives. Attends {e.seconds} secondes puis refais `/add +225XXXXXXXX`.",
+                f"⏳ Trop de tentatives. Attends {e.seconds}s puis refais `/add +225XXXXXXXX`.",
                 parse_mode="Markdown"
             )
-            # Nettoyage
             del _pending[chat_id]
         except Exception as e2:
             await msg.edit_text(
-                f"❌ Erreur renvoi: {str(e2)[:200]}\n"
-                f"Refais `/add +225XXXXXXXX` manuellement.",
+                f"❌ Erreur renvoi: {str(e2)[:200]}\nRefais `/add +225XXXXXXXX` manuellement.",
                 parse_mode="Markdown"
             )
             del _pending[chat_id]
@@ -305,7 +299,8 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}", parse_mode="Markdown")
-        
+
+
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Vérifie le mot de passe 2FA."""
@@ -334,7 +329,6 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db.save_account(phone, session_str)
         await session_mgr.add_client(phone, client, me)
-
         del _pending[chat_id]
 
         if me.id not in authorized_users:
@@ -342,8 +336,8 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(
             f"✅ **Compte ajouté avec succès (2FA) !**\n"
-            f"👤 {me.first_name} (ID: `{me.id}`)\n"
-            f"📱 {phone}",
+            f"👤 `{me.first_name or '?'}` (ID: `{me.id}`)\n"
+            f"📱 `{phone}`",
             parse_mode="Markdown"
         )
     except PasswordHashInvalidError:
@@ -447,7 +441,6 @@ async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reporting_accounts.remove(phone)
     db.remove_account(phone)
-
     await update.message.reply_text(f"🗑️ `{phone}` retiré.", parse_mode="Markdown")
 
 
