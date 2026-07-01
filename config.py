@@ -1,7 +1,7 @@
 import os
 
 # Token du bot Telegram
-BOT_TOKEN = "8708628597:AAEVVIO6c5wAwMRAzCl_PGttklI5lrZlV1Q"
+BOT_TOKEN = "8708628597:AAE-cCyTLwXnm0x4azGmfZsjGYNpZ2P9AvE"
 
 # IDs Telegram des administrateurs autorisés
 AUTHORIZED_USERS = [
