@@ -20,7 +20,7 @@ from config import (
     BOT_TOKEN, AUTHORIZED_USERS, API_ID, API_HASH,
     SESSION_STRING, SESSIONS_DIR, ACCOUNTS_FILE
 )
-from database import Database
+from db import Database
 from session_mgr import SessionManager
 from reporter import Reporter
 from proxy_scraper import ProxyScraper
