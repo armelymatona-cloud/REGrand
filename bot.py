@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import sys
-import random
 import json
 import re
 
@@ -14,7 +13,6 @@ from telethon.errors import (
     PasswordHashInvalidError, FloodWaitError,
     SessionPasswordNeededError
 )
-from telethon.sessions import StringSession
 import httpx
 
 from config import (
@@ -119,7 +117,6 @@ reporting_accounts = ReportingAccounts()
 
 
 async def force_delete_webhook():
-    """Supprime le webhook de manière agressive jusqu'à confirmation."""
     async with httpx.AsyncClient() as client:
         for i in range(5):
             try:
@@ -131,26 +128,10 @@ async def force_delete_webhook():
                 if data.get("ok"):
                     logger.info(f"✅ Webhook supprimé (tentative {i+1})")
                     return True
-                else:
-                    logger.warning(f"⚠️ deleteWebhook réponse: {data}")
             except Exception as e:
                 logger.warning(f"⚠️ Tentative {i+1}: {e}")
             await asyncio.sleep(1)
-    
-    # Vérifier que le webhook est bien parti
-    try:
-        r = await client.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
-        )
-        data = r.json()
-        if data.get("result", {}).get("url"):
-            logger.error(f"❌ Webhook toujours présent: {data['result']['url']}")
-            return False
-        logger.info("✅ Aucun webhook actif confirmé")
-        return True
-    except Exception as e:
-        logger.warning(f"⚠️ Vérification webhook: {e}")
-        return True
+    return True
 
 
 @auth_required
@@ -158,14 +139,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 **REGrand Bot**\n\n"
         "Commandes:\n"
-        "`/add +225XXXXXXXX`\n"
-        "`/co CODE`\n"
-        "`/cod2 MOT_DE_PASSE`\n"
-        "`/status`\n"
-        "`/702 @username`\n"
-        "`/del +225XXXXXXXX`\n"
-        "`/scrape`\n"
-        "`/reconnect`",
+        "`/add +225XXXXXXXX` - Ajouter un compte\n"
+        "`/co CODE` - Valider le code\n"
+        "`/cod2 MOT_DE_PASSE` - Valider 2FA\n"
+        "`/status` - Statut des comptes\n"
+        "`/702 @username` - Signaler\n"
+        "`/del +225XXXXXXXX` - Supprimer un compte\n"
+        "`/scrape` - Scraper des proxies\n"
+        "`/reconnect` - Reconnecter",
         parse_mode="Markdown"
     )
 
@@ -184,9 +165,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_id = update.effective_chat.id
-
-    if chat_id in _pending:
-        del _pending[chat_id]
 
     try:
         client = create_telegram_client()
@@ -265,7 +243,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         retry_count = pending.get("retry_count", 0)
         if retry_count >= 2:
             await update.message.reply_text(
-                "❌ Code expire systématiquement. Attends 24h ou utilise un autre numéro.",
+                "❌ Code expire. Attends 24h ou utilise un autre numéro.",
                 parse_mode="Markdown"
             )
             try:
@@ -299,7 +277,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
 
             await msg.edit_text(
-                f"📱 Nouveau SMS envoyé. `/co CODE` immédiatement !",
+                f"📱 Nouveau SMS envoyé. `/co CODE` !",
                 parse_mode="Markdown"
             )
         except FloodWaitError as e:
@@ -414,7 +392,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     all_clients.extend(reporting_accounts.get_active_clients())
 
     if len(all_clients) < 1:
-        await update.message.reply_text("⚠️ Aucun compte.", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Aucun compte disponible.", parse_mode="Markdown")
         return
 
     msg = await update.message.reply_text(
@@ -468,43 +446,18 @@ async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reporting_accounts.clients.clear()
     external_count = await reporting_accounts.connect_all() or 0
     total = admin_count + external_count
-    await msg.edit_text(f"✅ {total} reconnectés ({admin_count} admins, {external_count} externes)", parse_mode="Markdown")
+    await msg.edit_text(
+        f"✅ {total} reconnectés ({admin_count} admins, {external_count} externes)",
+        parse_mode="Markdown"
+    )
 
 
 async def post_init(app):
-    """S'exécute après l'initialisation de l'application."""
-    # Étape 1: Supprimer le webhook de manière agressive
-    logger.info("🚀 Suppression du webhook existant...")
-    webhook_ok = await force_delete_webhook()
-    
-    if not webhook_ok:
-        logger.error("❌ Impossible de supprimer le webhook. Arrêt.")
-        return
-
+    await force_delete_webhook()
     logger.info("🚀 Démarrage de REGrand...")
     os.makedirs(SESSIONS_DIR, exist_ok=True)
 
-    admin_count = 0
-
-    if SESSION_STRING and len(SESSION_STRING) > 10:
-        try:
-            client = create_telegram_client(SESSION_STRING)
-            await client.connect()
-            if await client.is_user_authorized():
-                me = await client.get_me()
-                if me.id not in authorized_users:
-                    authorized_users.add(me.id)
-                session_mgr.add_client_sync(f"admin_{me.id}", client, me)
-                admin_count = 1
-                logger.info(f"✅ Admin principal: {me.first_name} (ID: {me.id})")
-            else:
-                admin_count = await session_mgr.load_all_active_accounts() or 0
-        except Exception as e:
-            logger.error(f"❌ Admin principal: {e}")
-            admin_count = await session_mgr.load_all_active_accounts() or 0
-    else:
-        admin_count = await session_mgr.load_all_active_accounts() or 0
-
+    admin_count = await session_mgr.load_all_active_accounts() or 0
     external_count = await reporting_accounts.connect_all() or 0
 
     if db.get_proxy_count() == 0:
