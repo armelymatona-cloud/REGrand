@@ -122,8 +122,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/reconnect` → Reconnecter tous les comptes\n"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
-
-
+    
 @auth_required
 async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -140,9 +139,17 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         client = create_telegram_client()
         await client.connect()
+        
+        # Envoyer la demande de code
         sent = await client.send_code_request(phone)
-        _pending[chat_id]["client"] = client
-        _pending[chat_id]["phone_code_hash"] = sent.phone_code_hash
+        
+        # Sauvegarder le hash et le client
+        _pending[chat_id] = {
+            "phone": phone,
+            "client": client,
+            "phone_code_hash": sent.phone_code_hash
+        }
+        
         await update.message.reply_text(
             f"📱 Code envoyé à `{phone}`\n"
             f"Utilise `/co CODE` pour valider.",
@@ -171,16 +178,29 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone_code_hash = pending.get("phone_code_hash")
 
     try:
-        await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
-        me = await client.get_me()
+        # Vérifier que le client est toujours connecté
+        if not client.is_connected():
+            await client.connect()
 
+        # Tentative de connexion
+        await client.sign_in(
+            phone=phone,
+            code=code,
+            phone_code_hash=phone_code_hash
+        )
+
+        me = await client.get_me()
         session_str = client.session.save()
+
+        # Sauvegarder en base
         db.save_account(phone, session_str)
         await session_mgr.add_client(phone, client, me)
 
+        # Ajouter l'utilisateur aux autorisés
         if me.id not in authorized_users:
             authorized_users.add(me.id)
 
+        # Nettoyer le pending
         if chat_id in _pending:
             del _pending[chat_id]
 
@@ -191,19 +211,29 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except SessionPasswordNeededError:
-        _pending[chat_id]["client"] = client
+        # 2FA requis - on garde le client en mémoire
+        _pending[chat_id] = {
+            "phone": phone,
+            "client": client
+        }
         await update.message.reply_text(
             "🔐 2FA requis ! Envoie `/cod2 MOTDEPASSE`",
             parse_mode="Markdown"
         )
     except PhoneCodeInvalidError:
-        await update.message.reply_text("❌ Code invalide.", parse_mode="Markdown")
+        await update.message.reply_text("❌ Code invalide. Vérifie et réessaie.", parse_mode="Markdown")
     except PhoneCodeExpiredError:
-        await update.message.reply_text("❌ Code expiré. Relance `/add`.", parse_mode="Markdown")
+        await update.message.reply_text("❌ Code expiré. Lance `/add` pour un nouveau code.", parse_mode="Markdown")
+        # Nettoyer la session expirée
+        if chat_id in _pending:
+            try:
+                await _pending[chat_id]["client"].disconnect()
+            except:
+                pass
+            del _pending[chat_id]
     except Exception as e:
-        await update.message.reply_text(f"❌ {str(e)[:200]}", parse_mode="Markdown")
-
-
+        await update.message.reply_text(f"❌ Erreur: {str(e)[:200]}", parse_mode="Markdown")
+        
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
