@@ -1,6 +1,6 @@
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8175803085:AAF_ZxsjpUxzs1w-qkcLnSeeqhYkj0gUPA8")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 # ↑ Ne mets PAS de fallback avec un token en dur !
 
 AUTHORIZED_USERS = [
