@@ -18,30 +18,23 @@ class Reporter:
 
     async def coordinated_report(self, clients: list, target_username: str) -> int:
         target = target_username.strip().lstrip("@")
-        logger.info(f"🎯 Signalement coordonné de @{target} ({len(clients)} comptes)")
-
         success = 0
         for client, me in clients:
             try:
                 ok = await self._report_single(client, me, target)
                 if ok:
                     success += 1
-                # Pause aléatoire entre chaque compte
                 await asyncio.sleep(random.uniform(3, 7))
             except FloodWaitError as e:
-                logger.warning(f"⏳ Flood wait {e.seconds}s pour {getattr(me, 'first_name', '?')}, on passe au suivant")
                 continue
             except Exception as e:
-                logger.error(f"❌ Erreur avec {getattr(me, 'first_name', '?')}: {e}")
-
-        logger.info(f"✅ Terminé: {success}/{len(clients)} pour @{target}")
+                logger.error(f"Erreur avec {getattr(me, 'first_name', '?')}: {e}")
         return success
 
     async def _report_single(self, client: TelegramClient, me, target_username: str) -> bool:
         try:
             target = await client.get_entity(target_username)
 
-            # Méthode 1 : ReportPeer avec plusieurs raisons
             raisons = [
                 InputReportReasonSpam(),
                 InputReportReasonViolence(),
@@ -61,7 +54,6 @@ class Reporter:
                 except Exception:
                     continue
 
-            # Méthode 2 : Envoyer un message et le signaler
             try:
                 msg = await client.send_message(target, ".")
                 await asyncio.sleep(random.uniform(1, 2))
@@ -82,7 +74,6 @@ class Reporter:
             except Exception:
                 pass
 
-            # Méthode 3 : Block/Unblock
             try:
                 await client(BlockRequest(id=target))
                 await asyncio.sleep(random.uniform(1, 2))
@@ -95,5 +86,5 @@ class Reporter:
         except FloodWaitError:
             raise
         except Exception as e:
-            logger.error(f"❌ Erreur dans _report_single: {e}")
+            logger.error(f"Erreur dans _report_single: {e}")
             return False
