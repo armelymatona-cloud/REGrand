@@ -64,9 +64,8 @@ class ReportingAccounts:
             try:
                 with open(self.FILE_PATH, "r") as f:
                     self.accounts = json.load(f)
-                logger.info(f"📂 {len(self.accounts)} comptes externes chargés")
             except Exception as e:
-                logger.error(f"❌ Erreur chargement: {e}")
+                logger.error(f"Erreur chargement: {e}")
                 self.accounts = {}
         else:
             self.accounts = {}
@@ -75,8 +74,8 @@ class ReportingAccounts:
         try:
             with open(self.FILE_PATH, "w") as f:
                 json.dump(self.accounts, f, indent=2)
-        except Exception as e:
-            logger.error(f"❌ Erreur sauvegarde: {e}")
+        except Exception:
+            pass
 
     def add(self, phone, session_string):
         self.accounts[phone] = session_string
@@ -128,8 +127,8 @@ async def force_delete_webhook():
                 if data.get("ok"):
                     logger.info(f"✅ Webhook supprimé (tentative {i+1})")
                     return True
-            except Exception as e:
-                logger.warning(f"⚠️ Tentative {i+1}: {e}")
+            except Exception:
+                pass
             await asyncio.sleep(1)
     return True
 
@@ -139,14 +138,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 **REGrand Bot**\n\n"
         "Commandes:\n"
-        "`/add +225XXXXXXXX` - Ajouter un compte\n"
-        "`/co CODE` - Valider le code\n"
-        "`/cod2 MOT_DE_PASSE` - Valider 2FA\n"
-        "`/status` - Statut des comptes\n"
-        "`/702 @username` - Signaler\n"
-        "`/del +225XXXXXXXX` - Supprimer un compte\n"
-        "`/scrape` - Scraper des proxies\n"
-        "`/reconnect` - Reconnecter",
+        "`/add +225XXXXXXXX`\n"
+        "`/co CODE`\n"
+        "`/cod2 MOT_DE_PASSE`\n"
+        "`/status`\n"
+        "`/702 @username`\n"
+        "`/del +225XXXXXXXX`\n"
+        "`/scrape`\n"
+        "`/reconnect`",
         parse_mode="Markdown"
     )
 
@@ -180,8 +179,8 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         await update.message.reply_text(
-            f"📱 **Code SMS** envoyé à `{phone}`.\n"
-            f"📩 `/co CODE` dès réception.",
+            f"📱 **Code envoyé** à `{phone}`.\n"
+            f"📩 Utilise `/co CODE` dès réception.",
             parse_mode="Markdown"
         )
     except FloodWaitError as e:
@@ -229,8 +228,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(
             f"✅ **Compte ajouté !**\n"
-            f"👤 `{me.first_name or '?'}` (ID: `{me.id}`)\n"
-            f"📱 `{phone}`",
+            f"👤 `{me.first_name or '?'}` (ID: `{me.id}`)",
             parse_mode="Markdown"
         )
 
@@ -243,7 +241,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         retry_count = pending.get("retry_count", 0)
         if retry_count >= 2:
             await update.message.reply_text(
-                "❌ Code expire. Attends 24h ou utilise un autre numéro.",
+                "❌ Code toujours expiré. Attends 24h ou change de numéro.",
                 parse_mode="Markdown"
             )
             try:
@@ -276,10 +274,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "retry_count": retry_count + 1
             }
 
-            await msg.edit_text(
-                f"📱 Nouveau SMS envoyé. `/co CODE` !",
-                parse_mode="Markdown"
-            )
+            await msg.edit_text(f"📱 Nouveau code envoyé. `/co CODE`", parse_mode="Markdown")
         except FloodWaitError as e:
             await msg.edit_text(f"⏳ {e.seconds}s. Refais `/add`", parse_mode="Markdown")
             del _pending[chat_id]
@@ -324,8 +319,7 @@ async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(
             f"✅ **Compte ajouté (2FA) !**\n"
-            f"👤 `{me.first_name or '?'}` (ID: `{me.id}`)\n"
-            f"📱 `{phone}`",
+            f"👤 `{me.first_name or '?'}` (ID: `{me.id}`)",
             parse_mode="Markdown"
         )
     except PasswordHashInvalidError:
