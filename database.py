@@ -1,130 +1,37 @@
-import sqlite3
 import logging
-import os
-from config import DATABASE_PATH
+import aiohttp
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
 
-class Account:
-    def __init__(self, phone: str, session_string: str):
-        self.phone = phone
-        self.session_string = session_string
+class ProxyScraper:
+    def __init__(self, db):
+        self.db = db
 
-
-class Database:
-    def __init__(self, db_path: str = DATABASE_PATH):
-        self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-        self._init_db()
-
-    def _connect(self):
-        return sqlite3.connect(self.db_path)
-
-    def _init_db(self):
-        conn = self._connect()
-        c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                phone TEXT PRIMARY KEY,
-                session_string TEXT NOT NULL,
-                active INTEGER DEFAULT 1,
-                created_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS proxies (
-                proxy TEXT PRIMARY KEY,
-                protocol TEXT DEFAULT 'http',
-                created_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS targets (
-                target TEXT PRIMARY KEY,
-                reports INTEGER DEFAULT 1,
-                last_reported TEXT DEFAULT (datetime('now'))
-            )
-        """)
-        conn.commit()
-        conn.close()
-
-    def save_account(self, phone: str, session_string: str):
-        conn = self._connect()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT OR REPLACE INTO accounts (phone, session_string, active) VALUES (?, ?, 1)",
-            (phone, session_string)
-        )
-        conn.commit()
-        conn.close()
-
-    def get_active_accounts(self):
-        conn = self._connect()
-        cur = conn.cursor()
-        cur.execute("SELECT phone, session_string FROM accounts WHERE active = 1")
-        rows = cur.fetchall()
-        conn.close()
-        return [Account(phone=r[0], session_string=r[1]) for r in rows]
-
-    def update_account_status(self, phone: str, active: bool):
-        conn = self._connect()
-        cur = conn.cursor()
-        cur.execute("UPDATE accounts SET active = ? WHERE phone = ?", (int(active), phone))
-        conn.commit()
-        conn.close()
-
-    def remove_account(self, phone: str):
-        conn = self._connect()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM accounts WHERE phone = ?", (phone,))
-        conn.commit()
-        conn.close()
-
-    def get_proxy_count(self) -> int:
-        conn = self._connect()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM proxies")
-        row = cur.fetchone()
-        conn.close()
-        return row[0] if row else 0
-
-    def add_proxies(self, proxies: list) -> int:
-        conn = self._connect()
-        cur = conn.cursor()
-        new_count = 0
-        for proxy in proxies:
+    async def scrape_and_store(self) -> int:
+        proxies = []
+        sources = [
+            "https://free-proxy-list.net/",
+            "https://www.sslproxies.org/",
+        ]
+        for url in sources:
             try:
-                cur.execute("INSERT OR IGNORE INTO proxies (proxy) VALUES (?)", (proxy,))
-                if cur.rowcount > 0:
-                    new_count += 1
-            except Exception:
-                pass
-        conn.commit()
-        conn.close()
-        return new_count
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=15) as resp:
+                        html = await resp.text()
+                        soup = BeautifulSoup(html, "lxml")
+                        for row in soup.select("table.table tbody tr"):
+                            cells = row.find_all("td")
+                            if len(cells) >= 2:
+                                ip = cells[0].text.strip()
+                                port = cells[1].text.strip()
+                                proxies.append(f"{ip}:{port}")
+            except Exception as e:
+                logger.error(f"Erreur scraping {url}: {e}")
 
-    def get_random_proxies(self, limit: int = 5) -> list:
-        conn = self._connect()
-        cur = conn.cursor()
-        cur.execute("SELECT proxy FROM proxies ORDER BY RANDOM() LIMIT ?", (limit,))
-        rows = cur.fetchall()
-        conn.close()
-        return [row[0] for row in rows]
-
-    def add_target(self, target: str):
-        conn = self._connect()
-        cur = conn.cursor()
-        cur.execute("INSERT OR IGNORE INTO targets (target) VALUES (?)", (target,))
-        conn.commit()
-        conn.close()
-
-    def increment_target_reports(self, target: str):
-        conn = self._connect()
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE targets SET reports = reports + 1, last_reported = datetime('now') WHERE target = ?",
-            (target,)
-        )
-        conn.commit()
-        conn.close()
+        if proxies:
+            added = self.db.add_proxies(proxies)
+            logger.info(f"{added} nouveaux proxies ajoutés")
+            return added
+        return 0
