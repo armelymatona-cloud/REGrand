@@ -28,9 +28,7 @@ class ProxyScraper:
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=15),
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
             )
 
     def _parse_proxies(self, text):
@@ -45,14 +43,11 @@ class ProxyScraper:
                 if resp.status == 200:
                     text = await resp.text()
                     proxies = self._parse_proxies(text)
-                    if proxies:
-                        logger.info(f"✅ Scrapé: {url} ({len(proxies)} proxies)")
         except Exception:
             pass
         return proxies
 
     async def scrape_and_store(self):
-        logger.info("🚀 Scraping des proxies...")
         all_proxies = []
         tasks = [self._scrape_source(url) for url in self.SOURCES]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -68,6 +63,5 @@ class ProxyScraper:
 
         if all_proxies:
             new_count = self.db.add_proxies(all_proxies)
-            logger.info(f"🎉 {new_count} nouveaux proxies (total: {self.db.get_proxy_count()})")
             return new_count
         return 0
