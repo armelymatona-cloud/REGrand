@@ -26,6 +26,7 @@ class Reporter:
                     success += 1
                 await asyncio.sleep(random.uniform(3, 7))
             except FloodWaitError as e:
+                logger.warning(f"FloodWait: {e.seconds}s")
                 continue
             except Exception as e:
                 logger.error(f"Erreur avec {getattr(me, 'first_name', '?')}: {e}")
