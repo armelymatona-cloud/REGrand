@@ -15,6 +15,7 @@ REAL_LANG_CODES = ["fr", "en", "fr-FR", "en-US"]
 REAL_SYSTEM_VERSIONS = ["Android 14", "Android 13", "iOS 18.0", "iOS 17.5", "Android 12"]
 REAL_APP_VERSIONS = ["10.14.5", "10.14.4", "10.13.3", "10.12.8", "11.0.0"]
 
+
 def create_telegram_client(session_str: str = "", proxy=None) -> TelegramClient:
     device = random.choice(REAL_DEVICES)
     lang = random.choice(REAL_LANG_CODES)
