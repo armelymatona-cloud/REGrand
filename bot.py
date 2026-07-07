@@ -20,7 +20,7 @@ from config import (
     BOT_TOKEN, AUTHORIZED_USERS, API_ID, API_HASH,
     SESSION_STRING, SESSIONS_DIR, ACCOUNTS_FILE
 )
-from db import Database
+from database import Database
 from session_mgr import SessionManager
 from reporter import Reporter
 from proxy_scraper import ProxyScraper
@@ -85,74 +85,43 @@ class ReportingAccounts:
         if phone in self.accounts:
             del self.accounts[phone]
             self._save()
-        if phone in self.clients:
-            try:
-                client, _ = self.clients[phone]
-                asyncio.create_task(client.disconnect())
-            except Exception:
-                pass
-            del self.clients[phone]
 
-    async def connect_all(self) -> int:
+    async def connect_all(self):
         count = 0
         for phone, session_str in self.accounts.items():
-            if session_str and len(session_str) > 10:
-                try:
-                    client = create_telegram_client(session_str)
-                    await client.connect()
-                    if await client.is_user_authorized():
-                        me = await client.get_me()
-                        self.clients[phone] = (client, me)
-                        count += 1
-                except Exception:
-                    pass
+            try:
+                client = create_telegram_client(session_str)
+                await client.connect()
+                if await client.is_user_authorized():
+                    me = await client.get_me()
+                    self.clients[phone] = (client, me)
+                    count += 1
+            except Exception as e:
+                logger.error(f"Erreur connexion {phone}: {e}")
         return count
 
-    def get_active_clients(self) -> list:
+    def get_active_clients(self):
         return [(c, m) for c, m in self.clients.values()]
 
 
 reporting_accounts = ReportingAccounts()
 
 
-async def force_take_control():
-    """Force la prise de contrôle totale du bot."""
-    async with httpx.AsyncClient() as client:
-        # Essayer 3 fois de forcer la main
-        for i in range(3):
-            try:
-                # 1. Supprimer le webhook
-                await client.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook",
-                    params={"drop_pending_updates": "true"}
-                )
-                # 2. Forcer un getUpdates pour tuer les autres sessions
-                await client.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
-                    json={"offset": -1, "timeout": 0}
-                )
-                logger.info(f"✅ Contrôle forcé (tentative {i+1})")
-            except Exception as e:
-                logger.warning(f"⚠️ Tentative {i+1}: {e}")
-            await asyncio.sleep(2)
-    return True
-
-
 @auth_required
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 **REGrand Bot**\n\n"
-        "Commandes:\n"
-        "`/add +225XXXXXXXX`\n"
-        "`/co CODE`\n"
-        "`/cod2 MOT_DE_PASSE`\n"
-        "`/status`\n"
-        "`/702 @username`\n"
-        "`/del +225XXXXXXXX`\n"
-        "`/scrape`\n"
-        "`/reconnect`",
-        parse_mode="Markdown"
+    text = (
+        "🤖 **REGrand Bot v2**\n\n"
+        "📌 **Commandes :**\n"
+        "`/add +225XXXXXXXX` → Ajouter un compte\n"
+        "`/co CODE` → Valider le code reçu\n"
+        "`/cod2 MOTDEPASSE` → Valider le 2FA\n"
+        "`/702 @username` → Signaler une cible\n"
+        "`/status` → Voir l'état des comptes\n"
+        "`/del +225XXXXXXXX` → Supprimer un compte\n"
+        "`/scrape` → Scraper des proxies\n"
+        "`/reconnect` → Reconnecter tous les comptes\n"
     )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 @auth_required
@@ -164,32 +133,21 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = context.args[0].strip()
     if not phone.startswith("+"):
         phone = "+" + phone
-    if not re.match(r'^\+\d{7,15}$', phone):
-        await update.message.reply_text("❌ Format invalide.", parse_mode="Markdown")
-        return
 
     chat_id = update.effective_chat.id
+    _pending[chat_id] = {"phone": phone}
 
     try:
         client = create_telegram_client()
         await client.connect()
         sent = await client.send_code_request(phone)
-
-        _pending[chat_id] = {
-            "phone": phone,
-            "client": client,
-            "phone_code_hash": sent.phone_code_hash,
-            "step": "code",
-            "retry_count": 0
-        }
-
+        _pending[chat_id]["client"] = client
+        _pending[chat_id]["phone_code_hash"] = sent.phone_code_hash
         await update.message.reply_text(
-            f"📱 **Code SMS** envoyé à `{phone}`.\n"
-            f"📩 `/co CODE` dès réception.",
+            f"📱 Code envoyé à `{phone}`\n"
+            f"Utilise `/co CODE` pour valider.",
             parse_mode="Markdown"
         )
-    except FloodWaitError as e:
-        await update.message.reply_text(f"⏳ Flood wait: {e.seconds}s", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ {str(e)[:200]}", parse_mode="Markdown")
 
@@ -203,33 +161,28 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = context.args[0].strip()
     chat_id = update.effective_chat.id
 
-    if chat_id not in _pending:
-        await update.message.reply_text("❌ Fais d'abord `/add`", parse_mode="Markdown")
+    if chat_id not in _pending or "client" not in _pending[chat_id]:
+        await update.message.reply_text("❌ Lance `/add` d'abord.", parse_mode="Markdown")
         return
 
     pending = _pending[chat_id]
-    phone = pending["phone"]
     client = pending["client"]
-    phone_code_hash = pending["phone_code_hash"]
-
-    try:
-        if not client.is_connected():
-            await client.connect()
-    except Exception:
-        pass
+    phone = pending["phone"]
+    phone_code_hash = pending.get("phone_code_hash")
 
     try:
         await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
-
         me = await client.get_me()
-        session_str = client.session.save()
 
+        session_str = client.session.save()
         db.save_account(phone, session_str)
         await session_mgr.add_client(phone, client, me)
-        del _pending[chat_id]
 
         if me.id not in authorized_users:
             authorized_users.add(me.id)
+
+        if chat_id in _pending:
+            del _pending[chat_id]
 
         await update.message.reply_text(
             f"✅ **Compte ajouté !**\n"
@@ -238,57 +191,15 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except SessionPasswordNeededError:
-        pending["step"] = "2fa"
-        await update.message.reply_text("🔐 2FA ! `/cod2 MOT_DE_PASSE`", parse_mode="Markdown")
-    except PhoneCodeInvalidError:
-        await update.message.reply_text("❌ Code invalide. `/co CODE`", parse_mode="Markdown")
-    except PhoneCodeExpiredError:
-        retry_count = pending.get("retry_count", 0)
-        if retry_count >= 2:
-            await update.message.reply_text(
-                "❌ Trop d'expirations. Attends 24h ou change de numéro.",
-                parse_mode="Markdown"
-            )
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-            del _pending[chat_id]
-            return
-
-        msg = await update.message.reply_text(
-            f"❌ Expiré. Nouvel envoi ({retry_count+1}/2)...",
+        _pending[chat_id]["client"] = client
+        await update.message.reply_text(
+            "🔐 2FA requis ! Envoie `/cod2 MOTDEPASSE`",
             parse_mode="Markdown"
         )
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-
-        try:
-            await asyncio.sleep(3)
-            new_client = create_telegram_client()
-            await new_client.connect()
-            sent = await new_client.send_code_request(phone)
-
-            _pending[chat_id] = {
-                "phone": phone,
-                "client": new_client,
-                "phone_code_hash": sent.phone_code_hash,
-                "step": "code",
-                "retry_count": retry_count + 1
-            }
-
-            await msg.edit_text(f"📱 Nouveau SMS. `/co CODE` !", parse_mode="Markdown")
-        except FloodWaitError as e:
-            await msg.edit_text(f"⏳ {e.seconds}s. Refais `/add`", parse_mode="Markdown")
-            del _pending[chat_id]
-        except Exception as e2:
-            await msg.edit_text(f"❌ {str(e2)[:200]}", parse_mode="Markdown")
-            del _pending[chat_id]
-
-    except FloodWaitError as e:
-        await update.message.reply_text(f"⏳ {e.seconds}s", parse_mode="Markdown")
+    except PhoneCodeInvalidError:
+        await update.message.reply_text("❌ Code invalide.", parse_mode="Markdown")
+    except PhoneCodeExpiredError:
+        await update.message.reply_text("❌ Code expiré. Relance `/add`.", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ {str(e)[:200]}", parse_mode="Markdown")
 
@@ -296,31 +207,32 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth_required
 async def verify_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: `/cod2 MOT_DE_PASSE`", parse_mode="Markdown")
+        await update.message.reply_text("Usage: `/cod2 MOTDEPASSE`", parse_mode="Markdown")
         return
 
     password = " ".join(context.args)
     chat_id = update.effective_chat.id
 
-    if chat_id not in _pending:
-        await update.message.reply_text("❌ Fais `/add` d'abord", parse_mode="Markdown")
+    if chat_id not in _pending or "client" not in _pending[chat_id]:
+        await update.message.reply_text("❌ Lance `/add` d'abord.", parse_mode="Markdown")
         return
 
     pending = _pending[chat_id]
-    phone = pending["phone"]
     client = pending["client"]
+    phone = pending["phone"]
 
     try:
         await client.sign_in(password=password)
         me = await client.get_me()
-        session_str = client.session.save()
 
+        session_str = client.session.save()
         db.save_account(phone, session_str)
         await session_mgr.add_client(phone, client, me)
-        del _pending[chat_id]
 
         if me.id not in authorized_users:
             authorized_users.add(me.id)
+
+        del _pending[chat_id]
 
         await update.message.reply_text(
             f"✅ **Compte ajouté (2FA) !**\n"
@@ -451,15 +363,21 @@ async def reconnect(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def force_take_control():
+    """Force la suppression du webhook pour prendre le contrôle du bot."""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url)
+            logger.info(f"Webhook supprimé: {r.json()}")
+    except Exception as e:
+        logger.error(f"Erreur suppression webhook: {e}")
+
+
 async def post_init(app):
     logger.info("🚀 Prise de contrôle du bot...")
-    
-    # Attendre un peu pour laisser le temps à l'ancienne session de se terminer
     await asyncio.sleep(2)
-    
-    # Forcer la suppression du webhook
     await force_take_control()
-    
     logger.info("🚀 Démarrage de REGrand...")
     os.makedirs(SESSIONS_DIR, exist_ok=True)
 
@@ -480,7 +398,7 @@ def main():
     logger.info("🔄 Initialisation du bot...")
 
     if not BOT_TOKEN:
-        logger.error("❌ BOT_TOKEN manquant !")
+        logger.error("❌ BOT_TOKEN manquant ! Définis la variable d'environnement BOT_TOKEN.")
         return
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
