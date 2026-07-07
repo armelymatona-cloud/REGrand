@@ -1,9 +1,22 @@
+import sqlite3
 import logging
-import aiohttp
-from bs4 import BeautifulSoup
+import os
+from config import DATABASE_PATH
 
 logger = logging.getLogger(__name__)
 
+
+class Account:
+    def __init__(self, phone: str, session_string: str):
+        self.phone = phone
+        self.session_string = session_string
+
+
+class Database:
+    def __init__(self, db_path: str = DATABASE_PATH):
+        self.db_path = db_path
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        self._init_db()
 
 class ProxyScraper:
     def __init__(self, db):
