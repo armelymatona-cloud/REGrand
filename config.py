@@ -1,7 +1,7 @@
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8175803085:AAF_ZxsjpUxzs1w-qkcLnSeeqhYkj0gUPA8")
-# ↑ REMPLACE par le NOUVEAU token de BotFather
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+# ↑ Ne mets PAS de fallback avec un token en dur !
 
 AUTHORIZED_USERS = [
     8045306923, 8161643057, 7842763694, 7471493416, 8008720027, 6436665202
