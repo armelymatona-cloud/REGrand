@@ -48,6 +48,7 @@ class Database:
         """)
         conn.commit()
         conn.close()
+        logger.info("✅ Base de données initialisée")
 
     def save_account(self, phone: str, session_string: str):
         conn = self._connect()
@@ -58,6 +59,7 @@ class Database:
         )
         conn.commit()
         conn.close()
+        logger.info(f"💾 Compte {phone} sauvegardé en DB")
 
     def get_active_accounts(self):
         conn = self._connect()
@@ -80,6 +82,7 @@ class Database:
         cur.execute("DELETE FROM accounts WHERE phone = ?", (phone,))
         conn.commit()
         conn.close()
+        logger.info(f"🗑️ Compte {phone} supprimé de la DB")
 
     def get_proxy_count(self) -> int:
         conn = self._connect()
