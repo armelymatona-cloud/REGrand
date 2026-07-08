@@ -18,6 +18,8 @@ class Reporter:
 
     async def coordinated_report(self, clients: list, target_username: str) -> int:
         target = target_username.strip().lstrip("@")
+        logger.info(f"🎯 Signalement coordonné de @{target} ({len(clients)} comptes)")
+
         success = 0
         for client, me in clients:
             try:
@@ -26,10 +28,12 @@ class Reporter:
                     success += 1
                 await asyncio.sleep(random.uniform(3, 7))
             except FloodWaitError as e:
-                logger.warning(f"FloodWait: {e.seconds}s")
+                logger.warning(f"⏳ Flood wait {e.seconds}s pour {getattr(me, 'first_name', '?')}")
                 continue
             except Exception as e:
-                logger.error(f"Erreur avec {getattr(me, 'first_name', '?')}: {e}")
+                logger.error(f"❌ Erreur avec {getattr(me, 'first_name', '?')}: {e}")
+
+        logger.info(f"✅ Terminé: {success}/{len(clients)} pour @{target}")
         return success
 
     async def _report_single(self, client: TelegramClient, me, target_username: str) -> bool:
@@ -87,5 +91,5 @@ class Reporter:
         except FloodWaitError:
             raise
         except Exception as e:
-            logger.error(f"Erreur dans _report_single: {e}")
+            logger.error(f"❌ Erreur dans _report_single: {e}")
             return False
