@@ -1,6 +1,6 @@
 from keep_alive import keep_alive
 BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-if not token:
+if not BOT_TOKEN:
     print("ERREUR : La variable TELEGRAM_TOKEN est introuvable ou vide !")
 else:
     # Affiche seulement les 4 premiers caractères par sécurité
