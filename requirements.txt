@@ -7,3 +7,5 @@ PySocks>=1.7.1
 pyrogram>=2.0.106
 tgcrypto>=1.2.5
 httpx>=0.27.0
+flask
+discord.py
