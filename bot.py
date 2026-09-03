@@ -1,4 +1,5 @@
 from keep_alive import keep_alive
+import os
 BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 if not BOT_TOKEN:
     print("ERREUR : La variable TELEGRAM_TOKEN est introuvable ou vide !")
@@ -7,7 +8,6 @@ else:
     print(f"Variable chargée avec succès (commence par : {token[:4]}...)")
 import asyncio
 import logging
-import os
 import sys
 import json
 import re
