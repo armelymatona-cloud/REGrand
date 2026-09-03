@@ -27,15 +27,21 @@ def create_telegram_client(session_str: str = "", proxy=None) -> TelegramClient:
     else:
         session = StringSession()
 
-    client = TelegramClient(
-        session,
-        API_ID,
-        API_HASH,
-        device_model=device,
-        lang_code=lang,
-        system_version=system,
-        app_version=app_ver,
-        proxy=None,
-        timeout=60,
-    )
+    logger.info("=== TEST TELETHON : démarrage ===")
+
+client = TelegramClient(
+    session,
+    API_ID,
+    API_HASH,
+    proxy=None,
+    timeout=60,
+)
+
+logger.info("=== TEST TELETHON : client créé ===")
+
+await client.connect()
+
+logger.info("=== TEST TELETHON : connect() terminé ===")
+
+print("Telethon connecté :", await client.is_user_authorized())
     return client
