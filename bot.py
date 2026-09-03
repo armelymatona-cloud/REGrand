@@ -1,5 +1,11 @@
 from keep_alive import keep_alive
 keep_alive()
+token = os.environ.get("TELEGRAM_TOKEN")
+if not token:
+    print("ERREUR : La variable TELEGRAM_TOKEN est introuvable ou vide !")
+else:
+    # Affiche seulement les 4 premiers caractères par sécurité
+    print(f"Variable chargée avec succès (commence par : {token[:4]}...)")
 import asyncio
 import logging
 import os
