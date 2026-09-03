@@ -1,47 +1,84 @@
 import logging
 import random
+
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+
 from config import API_ID, API_HASH
 
 logger = logging.getLogger(__name__)
 
+
 REAL_DEVICES = [
-    "Samsung SM-S928B", "iPhone16,2", "Xiaomi 23127PN0CG",
-    "Pixel 9 Pro", "OnePlus CPH2581", "Samsung SM-A556B",
-    "iPhone15,3", "Xiaomi 2211133C", "OPPO CPH2499", "Vivo V2324A",
+    "Samsung SM-S928B",
+    "iPhone16,2",
+    "Xiaomi 23127PN0CG",
+    "Pixel 9 Pro",
+    "OnePlus CPH2581",
+    "Samsung SM-A556B",
+    "iPhone15,3",
+    "Xiaomi 2211133C",
+    "OPPO CPH2499",
+    "Vivo V2324A",
 ]
-REAL_LANG_CODES = ["fr", "en", "fr-FR", "en-US"]
-REAL_SYSTEM_VERSIONS = ["Android 14", "Android 13", "iOS 18.0", "iOS 17.5", "Android 12"]
-REAL_APP_VERSIONS = ["10.14.5", "10.14.4", "10.13.3", "10.12.8", "11.0.0"]
+
+REAL_LANG_CODES = [
+    "fr",
+    "en",
+    "fr-FR",
+    "en-US",
+]
+
+REAL_SYSTEM_VERSIONS = [
+    "Android 14",
+    "Android 13",
+    "iOS 18.0",
+    "iOS 17.5",
+    "Android 12",
+]
+
+REAL_APP_VERSIONS = [
+    "10.14.5",
+    "10.14.4",
+    "10.13.3",
+    "10.12.8",
+    "11.0.0",
+]
 
 
-def create_telegram_client(session_str: str = "", proxy=None) -> TelegramClient:
+def create_telegram_client(
+    session_str: str = "",
+    proxy=None,
+) -> TelegramClient:
+
+    logger.info("=== TELETHON: création du client ===")
+    logger.info("=== TELETHON: proxy désactivé ===")
+
+    # Session Telethon
+    if session_str and len(session_str) > 10:
+        session = StringSession(session_str)
+        logger.info("=== TELETHON: StringSession existante chargée ===")
+    else:
+        session = StringSession()
+        logger.info("=== TELETHON: nouvelle StringSession ===")
+
     device = random.choice(REAL_DEVICES)
     lang = random.choice(REAL_LANG_CODES)
     system = random.choice(REAL_SYSTEM_VERSIONS)
     app_ver = random.choice(REAL_APP_VERSIONS)
 
-    if session_str and len(session_str) > 10:
-        session = StringSession(session_str)
-    else:
-        session = StringSession()
+    client = TelegramClient(
+        session,
+        API_ID,
+        API_HASH,
+        device_model=device,
+        lang_code=lang,
+        system_version=system,
+        app_version=app_ver,
+        proxy=None,
+        timeout=60,
+    )
 
-    logger.info("=== TEST TELETHON : démarrage ===")
+    logger.info("=== TELETHON: client créé avec succès ===")
 
-client = TelegramClient(
-    session,
-    API_ID,
-    API_HASH,
-    proxy=None,
-    timeout=60,
-)
-
-logger.info("=== TEST TELETHON : client créé ===")
-
-await client.connect()
-
-logger.info("=== TEST TELETHON : connect() terminé ===")
-
-print("Telethon connecté :", await client.is_user_authorized())
     return client
