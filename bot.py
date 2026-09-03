@@ -1,6 +1,5 @@
 from keep_alive import keep_alive
-keep_alive()
-token = os.environ.get("TELEGRAM_TOKEN")
+BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 if not token:
     print("ERREUR : La variable TELEGRAM_TOKEN est introuvable ou vide !")
 else:
