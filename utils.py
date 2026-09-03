@@ -35,7 +35,7 @@ def create_telegram_client(session_str: str = "", proxy=None) -> TelegramClient:
         lang_code=lang,
         system_version=system,
         app_version=app_ver,
-        proxy=proxy,
+        proxy=None,
         timeout=60,
     )
     return client
